@@ -35,6 +35,7 @@ import com.qtekfun.ultimateotp.core.sync.api.SealedVaultKeyDto
 import com.qtekfun.ultimateotp.core.sync.api.ServerInfo
 import com.qtekfun.ultimateotp.core.sync.api.SessionInfo
 import com.qtekfun.ultimateotp.core.sync.api.SessionList
+import com.qtekfun.ultimateotp.core.sync.api.SignupRequest
 import com.qtekfun.ultimateotp.core.sync.api.SrpAttributes
 import com.qtekfun.ultimateotp.core.sync.api.SrpLoginResponse
 import com.qtekfun.ultimateotp.core.sync.api.SrpSession
@@ -55,10 +56,21 @@ import kotlin.math.abs
  * An in-memory implementation of the `/otp/v1` contract (contracts/openapi.yaml 1.0.0) on
  * MockWebServer, for client tests: it verifies request, head, seal and certificate signatures
  * like the real server, enforces optimistic concurrency, and its [state] can be replaced to
- * simulate a restored backup or tampering. Single account; no rate limits or network policy.
+ * simulate a restored backup or tampering. Single account; no rate limits or network policy
+ * ([failNext] injects any problem, such as `rate_limited` or `account_locked`).
+ *
+ * Contract 1.1.0 sign-up: with [signupEnabled], `/login/email-code` also "emails" codes to new
+ * addresses and `POST /otp/v1/signup` creates the account (code check, `email_taken`,
+ * `signup_disabled`, `keys_required`, proof of possession with `X-UOTP-Device: pending`), in the
+ * real server's order. [accountExists] false starts with no account at all (a fresh server);
+ * true is an account made by `ultimateotp account-create` for [email], waiting for its bootstrap.
  */
 @Suppress("TooManyFunctions", "LargeClass")
-class FakeUotpServer : AutoCloseable {
+class FakeUotpServer(
+    /** `UOTP_SIGNUP=enabled`. */
+    @Volatile var signupEnabled: Boolean = false,
+    accountExists: Boolean = true,
+) : AutoCloseable {
     private val json =
         Json {
             ignoreUnknownKeys = true
@@ -83,12 +95,43 @@ class FakeUotpServer : AutoCloseable {
     private val nonces = mutableSetOf<String>()
     private var rotationRequired = false
 
+    private var accountEmail: String? = if (accountExists) DEFAULT_EMAIL else null
+
     /** The account's address (contract 1.1.0: the account identifier). */
-    val email = "owner@example.com"
+    val email: String get() = accountEmail ?: DEFAULT_EMAIL
+
+    /** True once an account exists (made by the CLI or by sign-up). */
+    val hasAccount: Boolean get() = accountEmail != null
 
     /** The last code "emailed" (tests read it from here). */
     var lastEmailCode: String? = null
         private set
+
+    private class Code(
+        val code: String,
+        var attempts: Int = 0,
+    )
+
+    private val codes = mutableMapOf<String, Code>()
+    private val injected = mutableMapOf<String, ArrayDeque<Problem>>()
+    private val hits = mutableMapOf<String, Int>()
+
+    /** The code "emailed" to [address] that is still valid, if any. */
+    fun codeFor(address: String): String? = codes[address]?.code
+
+    /** How many requests reached [path] (for example `/otp/v1/signup`). */
+    fun requests(path: String): Int = hits[path] ?: 0
+
+    /** The next request to [path] fails with this problem, whatever it carries. */
+    fun failNext(
+        path: String,
+        status: Int,
+        code: String,
+        retryAfter: Long? = null,
+    ) {
+        injected.getOrPut(path) { ArrayDeque() }.addLast(Problem(status = status, code = code, retryAfter = retryAfter))
+    }
+
     private val srpSessions = mutableMapOf<String, Triple<BigInteger, BigInteger, BigInteger>>() // id -> (A, b, B)
 
     /** The vault: head and items. */
@@ -183,6 +226,8 @@ class FakeUotpServer : AutoCloseable {
     @Suppress("CyclomaticComplexMethod")
     private fun route(r: RecordedRequest): MockResponse {
         val path = r.url.encodedPath
+        hits[path] = (hits[path] ?: 0) + 1
+        injected[path]?.removeFirstOrNull()?.let { throw Fail(it.status, it) }
         val s = path.removePrefix("/otp/v1/").split('/')
         return when {
             path == "/otp/v1/server-info" -> {
@@ -215,8 +260,12 @@ class FakeUotpServer : AutoCloseable {
             }
 
             path == "/otp/v1/login/email-code" -> {
-                if (body(r, EmailRequest.serializer()).email == email) lastEmailCode = (100_000 + ++counter).toString()
+                emailCode(body(r, EmailRequest.serializer()).email)
                 ok(Accepted.serializer(), Accepted(), ACCEPTED)
+            }
+
+            path == "/otp/v1/signup" -> {
+                signup(r)
             }
 
             path == "/otp/v1/srp/session" -> {
@@ -593,7 +642,7 @@ class FakeUotpServer : AutoCloseable {
         val req = body(r, EmailRequest.serializer())
         val srp = bundle?.srp
         val attrs =
-            if (req.email == email && srp != null) {
+            if (req.email == accountEmail && srp != null) {
                 SrpAttributes(srp.srpUserId, srp.srpSalt, bundle?.passwordKdf.orEmpty(), emailCodeRequired = true)
             } else {
                 // Decoy for unknown addresses: deterministic per address in the real server.
@@ -604,8 +653,7 @@ class FakeUotpServer : AutoCloseable {
 
     private fun srpSession(r: RecordedRequest): MockResponse {
         val req = body(r, SrpSessionRequest.serializer())
-        if (req.emailCode == null || req.emailCode != lastEmailCode) fail(UNAUTHORIZED, "invalid_email_code")
-        lastEmailCode = null
+        if (!checkCode(req.email, req.emailCode)) fail(UNAUTHORIZED, "invalid_email_code")
         val srp = bundle?.srp ?: fail(UNAUTHORIZED, "srp_failed")
         val v = BigInteger(1, B64u.decode(srp.srpVerifier))
         val b = BigInteger(1, ByteArray(EPHEMERAL).also { java.security.SecureRandom().nextBytes(it) })
@@ -642,7 +690,65 @@ class FakeUotpServer : AutoCloseable {
         return ok(SrpLoginResponse.serializer(), SrpLoginResponse(B64u.encode(m2), accountId, d, state.head, keys), CREATED)
     }
 
+    // ---- emailed codes and sign-up (contract 1.1.0) ---------------------------------------------
+
+    /** Like the server: codes go to the account's address, and to new ones only while sign-up is open. */
+    private fun emailCode(address: String) {
+        if (address != accountEmail && !signupEnabled) return
+        val code = (100_000 + ++counter).toString()
+        codes[address] = Code(code)
+        lastEmailCode = code
+    }
+
+    /** Single use, at most [MAX_CODE_ATTEMPTS] wrong tries (expiry is not simulated). */
+    private fun checkCode(
+        address: String,
+        code: String?,
+    ): Boolean {
+        val stored = codes[address]
+        val usable = stored != null && code != null && stored.attempts < MAX_CODE_ATTEMPTS
+        val right = usable && stored.code == code
+        when {
+            right -> {
+                codes.remove(address)
+                if (lastEmailCode == code) lastEmailCode = null
+            }
+
+            usable -> {
+                stored.attempts++
+            }
+        }
+        return right
+    }
+
+    private fun signup(r: RecordedRequest): MockResponse {
+        if (!signupEnabled) fail(FORBIDDEN, "signup_disabled")
+        val req = body(r, SignupRequest.serializer())
+        if (req.keys.srp == null || req.keys.passwordWrap == null) fail(BAD, "keys_required")
+        if (!checkCode(req.email, req.emailCode)) fail(UNAUTHORIZED, "invalid_email_code")
+        if (accountEmail != null) {
+            if (req.email == accountEmail) fail(CONFLICT, "email_taken")
+            error("the fake server holds a single account")
+        }
+        // Proof of possession of the new device key, before anything is stored.
+        if (r.headers["X-UOTP-Device"] != PENDING) fail(UNAUTHORIZED, "invalid_signature")
+        checkSignature(r, req.device.ed25519)
+        accountEmail = req.email
+        bundle = req.keys
+        keysRevision = 1
+        val d =
+            Device(nextId("dev_"), req.device.label, req.device.ed25519, req.device.x25519, "signup", null, null, now, null, null)
+                .copy(appVersion = req.device.appVersion)
+        devices[d.deviceId] = d
+        devicesRevision++
+        return ok(EnrollResponse.serializer(), EnrollResponse(accountId, d, state.head), CREATED)
+    }
+
     private companion object {
+        const val DEFAULT_EMAIL = "owner@example.com"
+        const val PENDING = "pending"
+        const val MAX_CODE_ATTEMPTS = 5
+        const val FORBIDDEN = 403
         const val SALT = 16
         const val EPHEMERAL = 32
         const val ACCEPTED = 202

@@ -97,6 +97,7 @@ fun SyncScreen(
     initialLink: String,
     onBack: () -> Unit,
     onLogin: () -> Unit,
+    onSignup: () -> Unit,
     model: SyncViewModel = hiltViewModel(),
 ) {
     val status by model.status.collectAsState()
@@ -123,7 +124,7 @@ fun SyncScreen(
             StepView(step, model)
             if (step is SyncStep.Idle || step is SyncStep.Done || step is SyncStep.Failed) {
                 if (status.account == null) {
-                    NoAccount(model, label, enrollLink, onLogin) { enrollLink = it }
+                    NoAccount(model, label, enrollLink, onLogin, onSignup) { enrollLink = it }
                 } else {
                     WithAccount(model, status.last, status.offline)
                 }
@@ -244,13 +245,17 @@ private fun doneText(kind: SyncStep.DoneKind): Int =
 
 private enum class Ask { NEW_ACCOUNT, PASSWORD, RECOVERY }
 
-/** No account yet: sign in (email), join from another device (QR), or use an enrollment token. */
+/**
+ * No account yet: create one or log in (email), join from another device (QR), or, under
+ * "Advanced", use an enrollment token from the server's CLI.
+ */
 @Composable
 private fun NoAccount(
     model: SyncViewModel,
     label: String,
     link: EnrollLink?,
     onLogin: () -> Unit,
+    onSignup: () -> Unit,
     onEnrollLink: (EnrollLink) -> Unit,
 ) {
     val settings by model.settings.collectAsState()
@@ -261,8 +266,10 @@ private fun NoAccount(
     var token by remember(link) { mutableStateOf(link?.token.orEmpty()) }
     var emailCode by remember { mutableStateOf("") }
     var ask by remember { mutableStateOf<Ask?>(null) }
+    var advanced by remember(link) { mutableStateOf(link != null) }
 
     Text(stringResource(R.string.sync_intro))
+    Button(onClick = onSignup, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.welcome_signup)) }
     Button(onClick = onLogin, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.login_title)) }
     OutlinedButton(onClick = { scanning = !scanning }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.pair_join)) }
     if (scanning) {
@@ -275,6 +282,8 @@ private fun NoAccount(
         )
     }
     HorizontalDivider()
+    TextButton(onClick = { advanced = !advanced }) { Text(stringResource(R.string.advanced_token)) }
+    if (!advanced) return
     Text(stringResource(R.string.token_section), style = MaterialTheme.typography.titleMedium)
     OutlinedTextField(server, { server = it }, label = { Text(stringResource(R.string.server_url)) }, modifier = Modifier.fillMaxWidth())
     OutlinedTextField(lan, { lan = it }, label = { Text(stringResource(R.string.lan_url)) }, modifier = Modifier.fillMaxWidth())

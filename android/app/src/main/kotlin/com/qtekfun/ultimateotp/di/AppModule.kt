@@ -5,12 +5,14 @@ package com.qtekfun.ultimateotp.di
 
 import android.content.Context
 import com.qtekfun.ultimateotp.core.sync.login.EmailLogin
+import com.qtekfun.ultimateotp.core.sync.login.EmailSignup
 import com.qtekfun.ultimateotp.core.sync.login.SrpEmailLogin
 import com.qtekfun.ultimateotp.core.vault.VaultRepository
 import com.qtekfun.ultimateotp.core.vault.VaultTransfer
 import com.qtekfun.ultimateotp.core.vault.db.VaultDatabase
 import com.qtekfun.ultimateotp.core.vault.secure.KeystoreSecretStore
 import com.qtekfun.ultimateotp.core.vault.secure.SecretStore
+import com.qtekfun.ultimateotp.sync.AccountRefresh
 import com.qtekfun.ultimateotp.sync.SyncController
 import dagger.Module
 import dagger.Provides
@@ -58,6 +60,14 @@ object AppModule {
     @Provides
     @Singleton
     fun emailLogin(sync: SyncController): EmailLogin = SrpEmailLogin(sync.engine, sync::api)
+
+    /** Public sign-up (contract 1.1.0 `/signup`), like Ente Auth's account creation. */
+    @Provides
+    @Singleton
+    fun emailSignup(sync: SyncController): EmailSignup = EmailSignup(sync.engine, sync::api)
+
+    @Provides
+    fun accountRefresh(sync: SyncController): AccountRefresh = AccountRefresh { sync.refresh() }
 
     @Provides
     @Singleton
