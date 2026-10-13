@@ -6,7 +6,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 # Security review package
 
 For an external reviewer (a firm or a volunteer). Version of this document: written against `master` at
-tag `v0.1.2` plus the 0.1.3 fixes; crypto format 1.1, API contract 1.1.0. Facts below were read from the
+tag `v0.1.2` plus the 0.2.0 changes; crypto format 1.1, API contract 1.1.0. Facts below were read from the
 repository on the date of writing; where something was not verified it says so.
 
 Status of the project: early development, **never reviewed by anyone outside the project**. One
