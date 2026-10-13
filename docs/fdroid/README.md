@@ -10,7 +10,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 the owner's `com.qtekfun.ultimatedeck.yml` and on the drafts of UltimatePhone and UltimateKeys. It is not
 submitted, and two values are deliberate placeholders (`deadbeef...`):
 
-- `commit:` the full hash of the release tag to build (first submission: the 0.1.3 tag).
+- `commit:` the full hash of the release tag to build (first submission: the 0.2.0 tag).
 - `AllowedAPKSigningKeys:` the SHA-256 of the release certificate (RELEASING.md, "F-Droid").
 
 Nothing here was pushed to the local fdroiddata clone or to GitLab.
@@ -117,7 +117,7 @@ and `AllowedAPKSigningKeys` are placeholders, so `fdroid build` could not run on
 
 ## What F-Droid will probably ask next
 
-- A tag with the fix: 0.1.2 crashes on sign-up; submit 0.1.3 or later.
+- A tag with the fix: 0.1.2 crashes on sign-up; submit 0.2.0 or later.
 - That the app works without a server and what the "server" is: the description says so. They may
   ask for the server's source to be linked: it is in `server/` of the same repository.
 - Whether the prebuilt `libsodium.so` / `libjnidispatch.so` can be built from source (see above).

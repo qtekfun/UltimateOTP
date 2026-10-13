@@ -25,7 +25,7 @@ Without the `UOTP_*` variables, `./gradlew assembleRelease` builds an unsigned A
 
 - `versionName` is SemVer: `X.Y.Z`, or `X.Y.Z-rc.N` for a release candidate. Before 1.0.0 it is `0.x`.
 - `versionCode` is a plain integer that **goes up by exactly one with every tag, release candidates
-  included**, and is never reused or lowered (so far 1, 2, 3; 0.1.3 is 4). Both live in
+  included**, and is never reused or lowered (so far 1, 2, 3; 0.2.0 is 4). Both live in
   `android/app/build.gradle.kts`. F-Droid and Android compare only `versionCode`; the workflow compares
   the tag with `versionName`.
 - Never move or delete a pushed tag. If a release is wrong, fix it and tag the next version: F-Droid
@@ -47,7 +47,7 @@ Without the `UOTP_*` variables, `./gradlew assembleRelease` builds an unsigned A
    emulator suite (docs/testing.md).
 6. Tag exactly `v<versionName>` on that commit and push the tag:
    ```sh
-   git tag -a v0.1.3 -m "UltimateOTP 0.1.3" && git push origin v0.1.3
+   git tag -a v0.2.0 -m "UltimateOTP 0.2.0" && git push origin v0.2.0
    ```
 7. The Release workflow checks that the tag matches `versionName`, runs `./gradlew check assembleRelease`,
    verifies the signature and version, pushes the server image `ghcr.io/qtekfun/ultimateotp-server:<version>`
