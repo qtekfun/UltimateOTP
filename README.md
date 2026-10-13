@@ -13,6 +13,7 @@ enrollment token from the server's CLI and QR pairing remain available as advanc
 - `server/`: backend (Python, FastAPI, SQLite); deployment in [docs/deploy.md](docs/deploy.md), live sync in [docs/sync.md](docs/sync.md), monitoring in [docs/monitoring/](docs/monitoring/)
 - `android/`: Android app (Kotlin, Jetpack Compose)
 - `contracts/`: HTTP API contract (OpenAPI)
+- Tests: what each layer proves, how to run it and what still needs a real phone, see [docs/testing.md](docs/testing.md)
 - Releases: built and signed by GitHub Actions on a `v*` tag, see [RELEASING.md](RELEASING.md)
 
 ## Status

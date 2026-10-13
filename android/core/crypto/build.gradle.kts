@@ -32,4 +32,6 @@ dependencies {
     // to call crypto_pwhash with a byte password (see PasswordKdf).
     compileOnly(libs.jna)
     implementation(libs.kotlinx.serialization.json)
+
+    testImplementation(libs.kotest.property)
 }
