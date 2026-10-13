@@ -1,1 +1,1 @@
-Fixed: signing up and logging in crashed in release builds. New: show/hide on password fields and a button to copy the recovery words.
+New design, import from Aegis, 2FAS, andOTP, Raivo and Bitwarden, trash, manual order, autofill, inactivity lock and account management. Fixes the crash on sign-up.
