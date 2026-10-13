@@ -1,0 +1,1 @@
+Sin cambios en la app. El proceso de publicación ahora también publica la imagen del servidor.
