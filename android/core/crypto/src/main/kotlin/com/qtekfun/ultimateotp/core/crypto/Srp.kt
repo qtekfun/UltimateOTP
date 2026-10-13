@@ -8,8 +8,9 @@ import java.math.BigInteger
 import java.security.MessageDigest
 
 /**
- * SRP-6a client (crypto-format.md §4.4): RFC 5054 group arithmetic, proofs as Ente's server
- * (`M1 = H(PAD(A) || PAD(B) || PAD(S))`, `M2 = H(PAD(A) || M1 || PAD(S))`).
+ * SRP-6a client (crypto-format.md §4.4, contracts/openapi.yaml 1.1.0): RFC 5054 group arithmetic,
+ * RFC 2945 proofs `M1 = H((H(N) xor H(PAD(g))) || H(I) || s || PAD(A) || PAD(B) || K)` and
+ * `M2 = H(PAD(A) || M1 || K)` with `K = H(PAD(S))`.
  */
 class SrpGroup(
     val n: BigInteger,
@@ -93,6 +94,8 @@ object Srp {
     /** One login attempt: send [publicA], then [proof] the server's `B`. */
     class Session internal constructor(
         private val group: SrpGroup,
+        private val identity: ByteArray,
+        private val salt: ByteArray,
         private val x: BigInteger,
         private val a: BigInteger,
     ) {
@@ -106,13 +109,16 @@ object Srp {
         fun proof(serverB: ByteArray): ByteArray {
             val n = group.n
             val b = BigInteger(1, serverB)
-            if (b.mod(n).signum() == 0) throw CryptoException.AuthenticationFailed("bad SRP B")
+            if (b.signum() == 0 || b >= n) throw CryptoException.AuthenticationFailed("bad SRP B")
             val u = group.hInt(publicA, group.pad(b))
             if (u.signum() == 0) throw CryptoException.AuthenticationFailed("bad SRP u")
             val base = b.subtract(group.k.multiply(group.verifier(x))).mod(n)
-            val s = group.pad(base.modPow(a.add(u.multiply(x)), n))
-            val m1 = group.h(publicA, group.pad(b), s)
-            expectedM2 = group.h(publicA, m1, s)
+            val key = group.h(group.pad(base.modPow(a.add(u.multiply(x)), n)))
+            val hn = group.h(group.pad(n))
+            val hg = group.h(group.pad(group.g))
+            val xor = ByteArray(hn.size) { (hn[it].toInt() xor hg[it].toInt()).toByte() }
+            val m1 = group.h(xor, group.h(identity), salt, publicA, group.pad(b), key)
+            expectedM2 = group.h(publicA, m1, key)
             return m1
         }
 
@@ -126,7 +132,10 @@ object Srp {
         salt: ByteArray,
         group: SrpGroup = SrpGroup.RFC5054_4096,
         privateA: ByteArray = Sodium.random(PRIVATE_BYTES),
-    ): Session = Session(group, group.x(srpUserId.toByteArray(), loginSubkey(kekPw), salt), BigInteger(1, privateA))
+    ): Session {
+        val identity = srpUserId.toByteArray(Charsets.US_ASCII)
+        return Session(group, identity, salt, group.x(identity, loginSubkey(kekPw), salt), BigInteger(1, privateA))
+    }
 
     /** For the RFC 5054 test vector, where the password is used directly. */
     internal fun startRaw(
@@ -135,5 +144,5 @@ object Srp {
         password: ByteArray,
         salt: ByteArray,
         privateA: ByteArray,
-    ): Session = Session(group, group.x(identity, password, salt), BigInteger(1, privateA))
+    ): Session = Session(group, identity, salt, group.x(identity, password, salt), BigInteger(1, privateA))
 }

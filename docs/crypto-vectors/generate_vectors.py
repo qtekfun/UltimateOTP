@@ -109,7 +109,7 @@ def manifest(live: list[tuple[str, int, bytes]]) -> bytes:
     return "".join(f"{i}:{v}:{sha256_b64u(blob)}\n" for i, v, blob in sorted(live)).encode()
 
 
-# ---- SRP-6a (RFC 5054 group arithmetic; proofs as Ente's server) -----------------------------
+# ---- SRP-6a (RFC 5054 arithmetic; RFC 2945 proofs, as contracts/openapi.yaml 1.1.0) -----------------------------
 
 def srp_pad(n: int, size: int) -> bytes:
     return n.to_bytes(size, "big")
@@ -127,9 +127,11 @@ def srp_session(N: int, g: int, H, I: bytes, P: bytes, s: bytes, a: int, b: int)
     S_client = pow((B - k * v) % N, a + u * x, N)
     S_server = pow(A * pow(v, u, N) % N, b, N)
     assert S_client == S_server
-    M1 = h(srp_pad(A, size), srp_pad(B, size), srp_pad(S_client, size))
-    M2 = h(srp_pad(A, size), M1, srp_pad(S_client, size))
-    return {"k": k, "x": x, "v": v, "A": A, "B": B, "u": u, "S": S_client, "M1": M1, "M2": M2, "size": size}
+    K = h(srp_pad(S_client, size))
+    hn, hg = h(srp_pad(N, size)), h(srp_pad(g, size))
+    M1 = h(bytes(p ^ q for p, q in zip(hn, hg)), h(I), s, srp_pad(A, size), srp_pad(B, size), K)
+    M2 = h(srp_pad(A, size), M1, K)
+    return {"k": k, "x": x, "v": v, "A": A, "B": B, "u": u, "S": S_client, "K": K, "M1": M1, "M2": M2, "size": size}
 
 
 def check_rfc5054(rfc: dict) -> None:
@@ -321,7 +323,7 @@ def main() -> None:
         "srp_salt_hex": h(srp_salt), "a_hex": h(srp_pad(a_priv, 64)), "b_hex": h(srp_pad(b_priv, 64)),
         "verifier_b64u": b64u(srp_pad(r["v"], size)), "A_b64u": b64u(srp_pad(r["A"], size)),
         "B_b64u": b64u(srp_pad(r["B"], size)), "u_hex": h(r["u"].to_bytes(32, "big")),
-        "S_hex": h(srp_pad(r["S"], size)), "M1_b64u": b64u(r["M1"]), "M2_b64u": b64u(r["M2"]),
+        "S_hex": h(srp_pad(r["S"], size)), "K_hex": h(r["K"]), "M1_b64u": b64u(r["M1"]), "M2_b64u": b64u(r["M2"]),
     }
 
     print(json.dumps(vectors, indent=2, ensure_ascii=False))
