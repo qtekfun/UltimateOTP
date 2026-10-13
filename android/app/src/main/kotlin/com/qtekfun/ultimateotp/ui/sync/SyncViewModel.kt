@@ -6,6 +6,7 @@ package com.qtekfun.ultimateotp.ui.sync
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.qtekfun.ultimateotp.core.crypto.CryptoException
+import com.qtekfun.ultimateotp.BuildConfig
 import com.qtekfun.ultimateotp.core.sync.DeviceView
 import com.qtekfun.ultimateotp.core.sync.EnrollLink
 import com.qtekfun.ultimateotp.core.sync.EnrollmentPolicy
@@ -74,7 +75,7 @@ sealed interface SyncStep {
         val what: DoneKind,
     ) : SyncStep
 
-    enum class Reason { NETWORK, WRONG_SECRET, LAN_ONLY, REJECTED_STATE, REFUSED, SERVER, LOGIN_UNAVAILABLE }
+    enum class Reason { NETWORK, WRONG_SECRET, LAN_ONLY, REJECTED_STATE, REFUSED, SERVER, LOGIN_UNAVAILABLE, INSECURE_URL }
 
     enum class DoneKind { ENROLLED, PAIRED, PAIRING_DECLINED, ROTATED, UPLOADED, PASSWORD_CHANGED }
 }
@@ -164,11 +165,21 @@ class SyncViewModel
         /** Enrollment and recovery go to the LAN address unless the owner allowed otherwise (decision 4). */
         private fun enrollmentUrl(server: String): String? {
             val s = settings.value
-            return when (val c = EnrollmentPolicy.choose(server, s.enrollmentUrl, s.allowRemoteEnrollment)) {
-                is EnrollmentPolicy.Choice.Use -> c.url
-                EnrollmentPolicy.Choice.Refused -> null
-            }
+            return (choose(server, s) as? EnrollmentPolicy.Choice.Use)?.url
         }
+
+        private fun choose(
+            server: String,
+            s: Settings,
+        ) = EnrollmentPolicy.choose(server, s.enrollmentUrl, s.allowRemoteEnrollment, allowCleartext = BuildConfig.DEBUG)
+
+        /** Why [enrollmentUrl] gave nothing: plain http (not allowed outside debug builds) or no LAN address. */
+        private fun refusal(server: String): SyncStep.Reason =
+            if (choose(server, settings.value) == EnrollmentPolicy.Choice.InsecureUrl) {
+                SyncStep.Reason.INSECURE_URL
+            } else {
+                SyncStep.Reason.LAN_ONLY
+            }
 
         /** Points the account at the everyday server URL after enrolling through the LAN address. */
         private suspend fun useServer(server: String) {
@@ -183,7 +194,7 @@ class SyncViewModel
             label: String,
             emailCode: String,
         ) = run(SyncStep.Busy.Kind.DERIVING_KEY) {
-            val url = enrollmentUrl(server) ?: return@run SyncStep.Failed(SyncStep.Reason.LAN_ONLY)
+            val url = enrollmentUrl(server) ?: return@run SyncStep.Failed(refusal(server))
             val words = engine.bootstrap(url, token.trim(), password, label, emailCode.trim().ifBlank { null })
             useServer(server)
             controller.syncNow()
@@ -196,7 +207,7 @@ class SyncViewModel
             password: String,
             label: String,
         ) = run(SyncStep.Busy.Kind.DERIVING_KEY) {
-            val url = enrollmentUrl(server) ?: return@run SyncStep.Failed(SyncStep.Reason.LAN_ONLY)
+            val url = enrollmentUrl(server) ?: return@run SyncStep.Failed(refusal(server))
             engine.enrollWithPassword(url, token.trim(), password, label)
             useServer(server)
             controller.syncNow()
@@ -209,7 +220,7 @@ class SyncViewModel
             words: String,
             label: String,
         ) = run {
-            val url = enrollmentUrl(server) ?: return@run SyncStep.Failed(SyncStep.Reason.LAN_ONLY)
+            val url = enrollmentUrl(server) ?: return@run SyncStep.Failed(refusal(server))
             engine.enrollWithRecoveryKey(url, token.trim(), words, label)
             useServer(server)
             controller.syncNow()

@@ -229,6 +229,7 @@ private fun failureText(reason: SyncStep.Reason): Int =
         SyncStep.Reason.NETWORK -> R.string.fail_network
         SyncStep.Reason.WRONG_SECRET -> R.string.fail_secret
         SyncStep.Reason.LAN_ONLY -> R.string.fail_lan
+        SyncStep.Reason.INSECURE_URL -> R.string.fail_insecure_url
         SyncStep.Reason.REJECTED_STATE -> R.string.fail_rejected
         SyncStep.Reason.REFUSED -> R.string.fail_refused
         SyncStep.Reason.SERVER -> R.string.fail_server
