@@ -24,31 +24,33 @@ import org.jlleitschuh.gradle.ktlint.KtlintExtension
  * SDK: banned outright. Group ids, matched whole or as a parent (`io.sentry` also bans
  * `io.sentry.android`, but `io.fabric` does not ban `io.fabric8`).
  */
-private val FORBIDDEN_GROUPS = listOf(
-    "com.google.android.gms",
-    "com.google.android.play",
-    "com.google.firebase",
-    "com.google.mlkit",
-    "com.crashlytics",
-    "io.fabric",
-    "io.sentry",
-    "ch.acra",
-    "com.bugsnag",
-    "com.datadoghq",
-    "com.newrelic",
-    "com.mixpanel",
-    "com.posthog",
-    "com.segment",
-    "com.rollbar",
-    "io.opentelemetry"
-)
+private val FORBIDDEN_GROUPS =
+    listOf(
+        "com.google.android.gms",
+        "com.google.android.play",
+        "com.google.firebase",
+        "com.google.mlkit",
+        "com.crashlytics",
+        "io.fabric",
+        "io.sentry",
+        "ch.acra",
+        "com.bugsnag",
+        "com.datadoghq",
+        "com.newrelic",
+        "com.mixpanel",
+        "com.posthog",
+        "com.segment",
+        "com.rollbar",
+        "io.opentelemetry",
+    )
 
 /** What ships and what runs in tests. A missing one fails the check instead of being skipped. */
-private val ANDROID_CLASSPATHS = listOf(
-    "debugRuntimeClasspath",
-    "releaseRuntimeClasspath",
-    "debugUnitTestRuntimeClasspath"
-)
+private val ANDROID_CLASSPATHS =
+    listOf(
+        "debugRuntimeClasspath",
+        "releaseRuntimeClasspath",
+        "debugUnitTestRuntimeClasspath",
+    )
 private val JVM_CLASSPATHS = listOf("runtimeClasspath", "testRuntimeClasspath")
 
 /** True if the module (group:name) belongs to a forbidden group or one of its subgroups. */
@@ -82,7 +84,7 @@ internal fun Project.configureQuality(android: Boolean) {
             "src/debug/java",
             "src/test/java",
             "src/test/kotlin",
-            "src/testFixtures/kotlin"
+            "src/testFixtures/kotlin",
         )
     }
     tasks.withType<Detekt>().configureEach {
@@ -121,23 +123,25 @@ internal fun Project.configureQuality(android: Boolean) {
 }
 
 private fun Project.registerForbiddenDependencyCheck(names: List<String>) {
-    val check = tasks.register("checkForbiddenDependencies") {
-        group = "verification"
-        description = "Fails if a runtime or test classpath contains Play Services, Firebase " +
-            "or a crash-reporting, analytics or telemetry SDK."
-        val roots = names.map { name ->
-            configurations.named(name).flatMap { it.incoming.resolutionResult.rootComponent }
-        }
-        doLast {
-            logger.lifecycle("checkForbiddenDependencies scanned ${names.joinToString()}")
-            val offenders = modulesOf(roots.map { it.get() }).filter(::isForbidden).sorted()
-            if (offenders.isNotEmpty()) {
-                throw GradleException(
-                    "Forbidden non-free dependencies found: ${offenders.joinToString()}"
-                )
+    val check =
+        tasks.register("checkForbiddenDependencies") {
+            group = "verification"
+            description = "Fails if a runtime or test classpath contains Play Services, Firebase " +
+                "or a crash-reporting, analytics or telemetry SDK."
+            val roots =
+                names.map { name ->
+                    configurations.named(name).flatMap { it.incoming.resolutionResult.rootComponent }
+                }
+            doLast {
+                logger.lifecycle("checkForbiddenDependencies scanned ${names.joinToString()}")
+                val offenders = modulesOf(roots.map { it.get() }).filter(::isForbidden).sorted()
+                if (offenders.isNotEmpty()) {
+                    throw GradleException(
+                        "Forbidden non-free dependencies found: ${offenders.joinToString()}",
+                    )
+                }
             }
         }
-    }
     tasks.named("check") { dependsOn(check) }
 }
 

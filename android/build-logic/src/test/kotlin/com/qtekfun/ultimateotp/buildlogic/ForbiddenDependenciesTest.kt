@@ -26,8 +26,8 @@ class ForbiddenDependenciesTest {
             "com.posthog:posthog-android",
             "com.segment.analytics.kotlin:android",
             "com.rollbar:rollbar-android",
-            "io.opentelemetry:opentelemetry-sdk"
-        ]
+            "io.opentelemetry:opentelemetry-sdk",
+        ],
     )
     fun `banned groups and their subgroups are forbidden`(module: String) {
         assertTrue(isForbidden(module))
@@ -40,8 +40,8 @@ class ForbiddenDependenciesTest {
             "com.squareup.okhttp3:okhttp",
             "io.fabric8:kubernetes-client",
             "com.google.android.material:material",
-            "com.google.dagger:hilt-android"
-        ]
+            "com.google.dagger:hilt-android",
+        ],
     )
     fun `look-alike groups are allowed`(module: String) {
         assertFalse(isForbidden(module))
