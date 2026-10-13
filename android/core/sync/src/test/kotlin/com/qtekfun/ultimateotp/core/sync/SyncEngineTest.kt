@@ -9,6 +9,7 @@ import com.qtekfun.ultimateotp.core.sync.api.UotpApi
 import com.qtekfun.ultimateotp.core.sync.fake.FakeUotpServer
 import com.qtekfun.ultimateotp.core.sync.fake.InMemorySyncStore
 import com.qtekfun.ultimateotp.core.sync.login.SrpEmailLogin
+import com.qtekfun.ultimateotp.core.sync.model.ItemOrder
 import com.qtekfun.ultimateotp.core.sync.model.Merge
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -275,5 +276,77 @@ class SyncEngineTest {
             val e = assertThrows<ApiException> { runBlocking { api.recoveryKeys("uoe_unknown") } }
             assertEquals("invalid_token", e.code)
             assertEquals("1.0.0", api.serverInfo().apiVersion)
+        }
+
+    private fun pairTrusted(): Pair<Device, Device> =
+        runBlocking {
+            val a = bootstrapped()
+            val b = device()
+            b.engine.enrollWithPassword(server.url, server.issueToken(), "correct horse", "Phone B")
+            b.engine.sync()
+            a.engine.trustDevice(
+                a.engine
+                    .devices()
+                    .single { it.deviceId == b.store.account()!!.deviceId }
+                    .deviceId,
+            )
+            a.engine.sync()
+            a to b
+        }
+
+    @Test
+    fun `trash on one device and an edit on another meet without a conflict copy`(): Unit =
+        runBlocking {
+            val (a, b) = pairTrusted()
+            val onA = a.store.items().single()
+            assertEquals(1, b.store.items().size)
+            // A trashes (a state change), B edits the notes (a content change), concurrently.
+            a.store.put(onA.copy(trashed = true, trashChanged = 5_000))
+            b.store.update(
+                b.store
+                    .items()
+                    .single()
+                    .copy(notes = "edited on B"),
+            )
+            val ra = a.engine.sync()
+            val rb = b.engine.sync()
+            a.engine.sync()
+            b.engine.sync()
+            assertEquals(0, (ra as SyncResult.Synced).conflicts)
+            assertEquals(0, (rb as SyncResult.Synced).conflicts)
+            for (d in listOf(a, b)) {
+                val only = d.store.items().single()
+                assertTrue(only.trashed)
+                assertEquals("edited on B", only.notes)
+            }
+        }
+
+    @Test
+    fun `reorders on two devices converge to one list`(): Unit =
+        runBlocking {
+            val (a, b) = pairTrusted()
+            a.store.add(otp("bob"))
+            a.store.add(otp("carol"))
+            a.engine.sync()
+            b.engine.sync()
+            val shown = a.store.items()
+            assertEquals(3, shown.size)
+            // Different entries are placed on each device at the same time.
+            val first = a.store.items().first { it.otp.label == "alice" }
+            val last = b.store.items().first { it.otp.label == "carol" }
+            a.store.put(first.copy(order = "V", orderChanged = 2_000))
+            b.store.put(last.copy(order = "F", orderChanged = 3_000))
+            a.engine.sync()
+            b.engine.sync()
+            a.engine.sync()
+            b.engine.sync()
+
+            fun orderOf(d: Device) =
+                d.store
+                    .items()
+                    .sortedWith(ItemOrder.COMPARATOR)
+                    .map { it.otp.label }
+            assertEquals(orderOf(a), orderOf(b))
+            assertEquals(listOf("carol", "alice", "bob"), orderOf(a))
         }
 }

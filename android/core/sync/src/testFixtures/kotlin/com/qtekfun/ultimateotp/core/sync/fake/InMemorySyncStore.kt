@@ -89,6 +89,13 @@ class InMemorySyncStore(
         rows[item.id] = row?.copy(localBlob = blob, localDeleted = false, dirty = true) ?: ItemRow.pending(item.id, blob)
     }
 
+    /** Writes [item] as it is, without touching `updated`: a trash or reorder change, not an edit. */
+    fun put(item: VaultItem) {
+        val row = rows[item.id]
+        val blob = cipher.seal(item)
+        rows[item.id] = row?.copy(localBlob = blob, localDeleted = false, dirty = true) ?: ItemRow.pending(item.id, blob)
+    }
+
     fun delete(id: UUID) {
         val row = rows[id] ?: return
         if (!row.onServer) rows.remove(id) else rows[id] = row.copy(localBlob = null, localDeleted = true, dirty = true)
