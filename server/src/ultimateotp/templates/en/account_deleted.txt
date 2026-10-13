@@ -1,0 +1,5 @@
+Subject: UltimateOTP: your account was deleted
+
+Your UltimateOTP account and everything stored for it on the server (devices, encrypted vault, history) were deleted just now. This cannot be undone.
+
+If this was not you, someone with access to one of your devices and to this mailbox or your password did it. Copies on your devices are not affected.

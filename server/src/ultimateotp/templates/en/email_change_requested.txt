@@ -1,0 +1,5 @@
+Subject: UltimateOTP: a change of your email address was requested
+
+A device signed in to your UltimateOTP account asked to change the account's email address to $new_email.
+
+Nothing changes until the code sent to that address is entered. If this was not you, sign out the devices you do not recognize in "Active sessions" and change your password.
