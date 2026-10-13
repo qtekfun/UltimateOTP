@@ -61,12 +61,20 @@ sealed interface AccountProblem {
         ): AccountProblem =
             when (code) {
                 "signup_disabled" -> SignupDisabled
+
                 "email_taken" -> EmailTaken
+
                 "invalid_email_code" -> InvalidCode
+
                 "srp_failed" -> WrongPassword
+
                 "account_locked" -> AccountLocked(retryAfter)
-                "rate_limited" -> RateLimited(retryAfter)
+
+                // Contract 1.2.0 `client_blocked`: also "wait", with the block's Retry-After.
+                "rate_limited", "client_blocked" -> RateLimited(retryAfter)
+
                 "enrollment_network_denied" -> LanOnly
+
                 else -> Server(code)
             }
     }
