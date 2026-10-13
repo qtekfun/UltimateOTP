@@ -46,3 +46,22 @@ Guiding rule from the owner: when in doubt, behave like Ente Auth. These decisio
     - If SMTP is not configured, the server refuses to start unless `UOTP_EMAIL_VERIFICATION=disabled` is set explicitly (for local development).
     - Codes are stored hashed (SHA-256 with a per-code salt) and compared in constant time.
     - Per-email and per-IP send limits stop the server from being used to spam mailboxes.
+
+## Round 3 (2026-10-13): server hardening and account management
+
+Contract 1.2.0. Implementation notes are in `docs/deploy.md` §6 to §10.
+
+14. **Client IPs are anonymized everywhere.** A salted hash with a daily rotating salt
+    (`HMAC-SHA256(daily_salt, ip)` truncated; IPv6 as its /64; salt from a server secret and the
+    UTC date). Applies to the access log, security events, ntfy and email notices, rate-limit keys
+    and metrics. The raw address stays in memory for the request. Consequence recorded here: the
+    active-sessions `last_ip` now shows the opaque daily id, not an address.
+15. **Temporary blocking with a growing back-off**: 15 min, 1 h, 24 h across routes per
+    anonymized client, decaying after a quiet period, a login does not erase it, the LAN is exempt,
+    configurable with `UOTP_BLOCK_*`, CLI `blocks`, a `client.blocked` event for CrowdSec.
+16. **Vault history** (30 days by default, capped) enables the app's trash and undo; key rotation
+    clears it.
+17. **Emails in `es` or `en`** from `Accept-Language` or a `lang` field, fallback `en`.
+18. **Account management routes**: delete the account (fresh email code or SRP proof), change the
+    email (code to the new address), sign out every other device, export everything.
+19. **Prometheus metrics, a Grafana dashboard and alert rules** (`docs/monitoring/`).

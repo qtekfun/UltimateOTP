@@ -71,6 +71,12 @@ services:
       UOTP_DENIED_NETWORKS: ${UOTP_DENIED_NETWORKS:-}
       # Who may scrape /metrics (never routed by the proxy).
       UOTP_METRICS_NETWORKS: ${UOTP_METRICS_NETWORKS:-127.0.0.0/8,::1/128}
+      # Temporary blocking of clients that keep failing (docs/deploy.md section 6).
+      UOTP_BLOCK_ENABLED: ${UOTP_BLOCK_ENABLED:-true}
+      UOTP_BLOCK_THRESHOLD: ${UOTP_BLOCK_THRESHOLD:-20}
+      UOTP_BLOCK_DURATIONS_S: ${UOTP_BLOCK_DURATIONS_S:-900,3600,86400}
+      # Vault history and trash for the app (section 8); 0 turns it off.
+      UOTP_HISTORY_RETENTION_DAYS: ${UOTP_HISTORY_RETENTION_DAYS:-30}
       # Open connections, live-sync streams included (3 per device at most).
       UOTP_LIMIT_CONCURRENCY: ${UOTP_LIMIT_CONCURRENCY:-256}
     # Small: tens of MiB idle; request bodies are capped at 4 MiB (UOTP_MAX_BODY_BYTES).
