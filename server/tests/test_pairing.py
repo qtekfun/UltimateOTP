@@ -6,9 +6,8 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from nacl.public import SealedBox
 
-from tests.client import Device, new_item_id, seal_for
+from tests.client import Device, new_item_id, open_grant, seal_for
 from tests.conftest import PUBLIC_CLIENT, Bootstrapped, FakeClock, Server
 from ultimateotp import b64, signing
 
@@ -29,7 +28,7 @@ def _join(b: Device, pairing: dict[str, Any]) -> Any:
 
 def _approval(boot: Bootstrapped, device_id: str, pending: dict[str, Any]) -> dict[str, str]:
     a = boot.device
-    sealed = seal_for(pending["x25519_public_key"], boot.vault.vault_key)
+    sealed = seal_for(pending["x25519_public_key"], boot.vault.vault_key, boot.account_id, 1)
     cert = signing.device_message(
         boot.account_id, device_id, pending["ed25519_public_key"], pending["x25519_public_key"]
     )
@@ -81,7 +80,7 @@ def test_full_pairing_flow(lan: TestClient, bootstrapped: Bootstrapped) -> None:
         signing.seal_message(data["account_id"], 1, device_id, sealed),
         data["device_key"]["seal_signature"],
     )
-    assert SealedBox(b.box_key).decrypt(sealed) == bootstrapped.vault.vault_key
+    assert open_grant(b.box_key, sealed, bootstrapped.account_id, 1) == bootstrapped.vault.vault_key
 
     b.device_id = device_id
     assert b.get("/otp/v1/vault").status_code == 200
