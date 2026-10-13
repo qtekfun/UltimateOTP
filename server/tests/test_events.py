@@ -18,7 +18,7 @@ import pytest
 import uvicorn
 
 from tests.client import Device, Vault, new_item_id
-from tests.conftest import PASSWORD, MIGRATIONS
+from tests.conftest import MIGRATIONS, PASSWORD
 from ultimateotp import db
 from ultimateotp.app import create_app
 from ultimateotp.clock import SystemClock

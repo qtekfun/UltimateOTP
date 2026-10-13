@@ -4,6 +4,7 @@
 
 import json
 import logging
+from http import HTTPStatus
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -83,7 +84,7 @@ def install(app: FastAPI, metrics: Metrics) -> None:
             fields = sorted({".".join(str(p) for p in e.get("loc", ())) for e in exc.errors()})
             return respond(request, 400, "invalid_request", "invalid: " + ", ".join(fields)[:500])
         if isinstance(exc, StarletteHTTPException):
-            code = "not_found" if exc.status_code == 404 else "invalid_request"
+            code = "not_found" if exc.status_code == HTTPStatus.NOT_FOUND else "invalid_request"
             return respond(request, exc.status_code, code)
         log.error("unhandled error on %s", request.url.path, exc_info=exc)
         return respond(request, 500, "internal_error")

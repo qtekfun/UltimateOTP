@@ -11,8 +11,8 @@ from ultimateotp import b64
 ACCOUNT_PREFIX = "acc_"
 DEVICE_PREFIX = "dev_"
 PAIRING_PREFIX = "pair_"
-ENROLLMENT_TOKEN_PREFIX = "uoe_"
-PAIRING_SECRET_PREFIX = "uop_"
+ENROLLMENT_TOKEN_PREFIX = "uoe_"  # noqa: S105 - a public prefix, not a secret
+PAIRING_SECRET_PREFIX = "uop_"  # noqa: S105 - a public prefix, not a secret
 
 ACCOUNT_ID = re.compile(r"^acc_[A-Za-z0-9_-]{22}$")
 DEVICE_ID = re.compile(r"^dev_[A-Za-z0-9_-]{22}$")
