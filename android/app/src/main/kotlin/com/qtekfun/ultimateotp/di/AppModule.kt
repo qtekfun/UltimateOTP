@@ -4,6 +4,8 @@
 package com.qtekfun.ultimateotp.di
 
 import android.content.Context
+import com.qtekfun.ultimateotp.core.sync.login.EmailLogin
+import com.qtekfun.ultimateotp.core.sync.login.EmailLoginUnavailable
 import com.qtekfun.ultimateotp.core.vault.VaultRepository
 import com.qtekfun.ultimateotp.core.vault.VaultTransfer
 import com.qtekfun.ultimateotp.core.vault.db.VaultDatabase
@@ -50,6 +52,11 @@ object AppModule {
     @Provides
     @Singleton
     fun transfer(vault: VaultRepository): VaultTransfer = VaultTransfer(vault)
+
+    /** Replaced by the SRP client once contracts/openapi.yaml has the login routes. */
+    @Provides
+    @Singleton
+    fun emailLogin(): EmailLogin = EmailLoginUnavailable()
 
     @Provides
     @Singleton

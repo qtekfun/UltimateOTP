@@ -23,7 +23,9 @@ import com.qtekfun.ultimateotp.ui.edit.EditScreen
 import com.qtekfun.ultimateotp.ui.lock.LockScreen
 import com.qtekfun.ultimateotp.ui.lock.WelcomeScreen
 import com.qtekfun.ultimateotp.ui.settings.SettingsScreen
+import com.qtekfun.ultimateotp.ui.sync.LoginScreen
 import com.qtekfun.ultimateotp.ui.sync.SyncScreen
+import com.qtekfun.ultimateotp.ui.sync.deviceLabel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -106,7 +108,12 @@ private fun Unlocked(pendingLink: MutableStateFlow<String?>) {
                     },
                 ),
         ) {
-            SyncScreen(initialLink = it.arguments?.getString("link").orEmpty(), onBack = { nav.popBackStack() })
+            SyncScreen(
+                initialLink = it.arguments?.getString("link").orEmpty(),
+                onBack = { nav.popBackStack() },
+                onLogin = { nav.navigate("login") },
+            )
         }
+        composable("login") { LoginScreen(defaultServer = "", label = deviceLabel(), onBack = { nav.popBackStack() }) }
     }
 }
