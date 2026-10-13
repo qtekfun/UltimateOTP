@@ -4,8 +4,11 @@
 # UltimateOTP crypto format, version 1
 
 Status: **normative for v1** (2026-10-13). Owner: the Android client (`feat/android`). The backend
-never decrypts anything, but it stores, validates the size of, and in a few places verifies
-(Ed25519 only) the structures below; §12 lists exactly what the server must do.
+never decrypts anything. The **signed statements** (request, head, seal and device signatures)
+are defined by the API contract `contracts/openapi.yaml` (owned by `feat/server`), which the
+server verifies; this document repeats them in §7 and §12 so that one place lists every byte a
+client produces, and the vectors cover them. If the two ever differ, the contract wins for those
+four statements and this document wins for everything encrypted.
 
 This document refines `design.md` §3 with the owner's decisions (`decisions.md`): live sync,
 password-wrapped vault key on the server (decrypted only on clients), Argon2id + XChaCha20-Poly1305
@@ -93,14 +96,16 @@ Caveats, handled in code:
 - `"text"`: the ASCII bytes of the string, no terminator, no length prefix.
 - `b64u`: base64url without padding (RFC 4648 §5). All binary values in JSON / HTTP use `b64u`
   unless stated otherwise (Ente's format uses standard base64, §11).
-- UUIDs (`vault_id`, `item_id`) are random version-4 UUIDs. Their text form is the lowercase
-  canonical `8-4-4-4-12`; their binary form (16 bytes, RFC 9562 byte order) goes into every
-  associated data / signed body.
+- `item_id` is a random version-4 UUID. Its text form (API, manifest) is the lowercase canonical
+  `8-4-4-4-12`; its binary form (16 bytes, RFC 9562 byte order) goes into associated data.
+- `lines(a, b, …)`: the contract's signed statements, the UTF-8 of the arguments (integers in
+  decimal) joined by `"\n"`, no trailing newline.
 - Every binary format starts with a version byte or a magic string. A reader rejects versions it
   does not know; it never guesses.
 - `AEAD(k, n, m, ad)` = `crypto_aead_xchacha20poly1305_ietf_encrypt` (32-byte key, 24-byte random
   nonce from `randombytes_buf`, 16-byte tag appended). Nonces are random, never counters.
-- `H(m)` = `crypto_generichash(32, m)` (BLAKE2b-256, unkeyed). `MAC(k, m)` = `crypto_generichash(32, m, k)`.
+- `H(m)` = `crypto_generichash(32, m)` (BLAKE2b-256, unkeyed). `SHA-256` = `crypto_hash_sha256`
+  (used where the contract chose it, so servers need only the standard library).
 - `KDF(k, id, ctx)` = `crypto_kdf_derive_from_key(32, id, ctx, k)`; `ctx` is exactly 8 ASCII bytes.
 - `SIGN(sk, m)` = `crypto_sign_detached` (Ed25519, 64 bytes).
 - Passwords: Unicode **NFC** normalization, then UTF-8. No trimming. (Ente imports use the raw
@@ -111,29 +116,29 @@ Caveats, handled in code:
 ## 3. Key hierarchy
 
 ```
-master password ──Argon2id(salt)──▶ KEK_pw ──AEAD wraps──▶ VK_e          (kind 1, server)
-                                      └──────AEAD wraps──▶ KEK_rk        (kind 3, server)
-recovery key RK (256 bit, 24 words) ──KDF──▶ KEK_rk ──AEAD wraps──▶ VK_e  (kind 2, server)
+master password ──Argon2id(salt)──▶ KEK_pw ──AEAD wraps──▶ VK_e          (kind 1)
+                                      └──────AEAD wraps──▶ KEK_rk        (kind 3)
+recovery key RK (256 bit, 24 words) ──KDF──▶ KEK_rk ──AEAD wraps──▶ VK_e  (kind 2)
 
 VK_e (vault key of key epoch e, 256-bit random)
- ├─ KDF(VK_e, 1, "uotpitem") = K_item   encrypts every item blob (§6)
- └─ KDF(VK_e, 2, "uotpcert") = K_cert   MACs device certificates (§5.2)
+ └─ KDF(VK_e, 1, "uotpitem") = K_item   encrypts every item blob (§6)
 
 device d: Ed25519 sign keypair + X25519 box keypair, generated on the device
           (private parts wrapped by the Android Keystore, never leave the device)
-          VK_e sealed to the box public key by another device (grant, §5.3)
+          VK_e sealed to the X25519 key by another device, signed by it (§5.3)
 exports:  own password, Argon2id + secretstream, independent of VK (§10)
 ```
 
-- `VK` never leaves a client in clear. The server stores only wraps and sealed grants.
+- `VK` never leaves a client in clear. The server stores only wraps and sealed keys.
 - `key_epoch` (u32, starts at 1) increases by one at every rotation (§8).
 - Why the extra *kind 3* wrap: rotation (after revoking a device) must re-wrap the new `VK` for
   the recovery key, but devices never store `RK`. With `KEK_rk` wrapped under the password, a
-  device that knows the password can re-create the recovery wrap. This exposes nothing new:
-  the password alone already unwraps `VK`. All three wraps are symmetric AEADs, so the server
-  cannot forge any of them (a sealed box to a recovery public key could be forged by the server).
-
----
+  device that knows the password can re-create the recovery wrap. This exposes nothing new: the
+  password alone already unwraps `VK`. All three wraps are symmetric AEADs, so the server cannot
+  forge any of them (a sealed box to a "recovery public key" could be forged by the server).
+- A device that works **offline only** (milestone M1) has a `VK` too, kept in the Keystore, and no
+  account: its items use the empty account id in their associated data (§6.2). When it creates or
+  joins an account its items are re-encrypted for the account.
 
 ## 4. Password key derivation and wraps
 
@@ -165,21 +170,31 @@ and as bytes, the `params_block` bound into wraps:
 ### 4.2 Wrap record
 
 ```
-wrap  = u8 0x01 || nonce[24] || AEAD(K, nonce, payload, AD)
-AD    = "uotp/wrap/v1" || u8 kind || vault_id[16] || u32be key_epoch || params
+wrap  = u8 0x01 || nonce[24] || AEAD(K, nonce, payload, AD)          (73 bytes)
+AD    = "UOTP-WRAP-v1" || u8 kind || u32be key_epoch || params
 ```
 
-| kind | name | K | payload | key_epoch | params | size |
-|---|---|---|---|---|---|---|
-| 1 | password | `KEK_pw` | `VK_e` (32) | `e` | `params_block` | 73 bytes |
-| 2 | recovery | `KEK_rk` | `VK_e` (32) | `e` | empty | 73 bytes |
-| 3 | recovery-kek | `KEK_pw` | `KEK_rk` (32) | `0` | `params_block` | 73 bytes |
+| kind | name | K | payload | key_epoch | params |
+|---|---|---|---|---|---|
+| 1 | password | `KEK_pw` | `VK_e` (32) | `e` | `params_block` |
+| 2 | recovery | `KEK_rk` | `VK_e` (32) | `e` | empty |
+| 3 | recovery-kek | `KEK_pw` | `KEK_rk` (32) | `0` | `params_block` |
+
+Mapping onto the contract's `KeyBundle` (all base64url, opaque to the server):
+
+| API field | content | bytes |
+|---|---|---|
+| `password_kdf` | `params_block` | 29 |
+| `password_wrap` | kind 1 wrap `||` kind 3 wrap | 146 |
+| `recovery_wrap` | kind 2 wrap | 73 |
+
+The account id is **not** in the wrap AD: the bootstrap device builds the wraps before the server
+assigns the account id (`POST /otp/v1/enroll`), and moving a wrap to another account gains
+nothing (it still needs that account's password or recovery key).
 
 A wrap whose AEAD fails is reported as "wrong password / wrong recovery key"; nothing else is
-said (no oracle beyond what the AEAD tag gives).
-
-The paranoid option from `design.md` §3.2 (no password wrap on the server) is supported: kinds 1
-and 3 are simply not uploaded; then rotation needs the recovery key to re-create kind 2.
+said. The paranoid option of `design.md` §3.2 (no password path on the server) omits
+`password_wrap` and `password_kdf`; rotation then asks for the recovery key to re-create kind 2.
 
 ### 4.3 Recovery key
 
@@ -197,67 +212,65 @@ and 3 are simply not uploaded; then rotation needs the recovery key to re-create
 
 ### 5.1 Device keys and id
 
-- Each device generates `(sign_pk, sign_sk)` with `crypto_sign_keypair` and, independently,
-  `(box_pk, box_sk)` with `crypto_box_keypair`. No Ed25519→X25519 conversion.
-- `fpr = H("uotp/device/v1" || sign_pk || box_pk)` (32 bytes).
-- `device_id = b64u(fpr[0..16])` (22 characters). Deterministic, so the server can recompute it
-  from the public keys and reject a mismatch.
+- Each device generates `(ed25519_pk, ed25519_sk)` with `crypto_sign_keypair` and, independently,
+  `(x25519_pk, x25519_sk)` with `crypto_box_keypair`. No Ed25519→X25519 conversion.
+- `device_id` (`dev_` + 22 characters) and `account_id` (`acc_` + 22) are assigned by the server.
 
-### 5.2 Device certificate
+### 5.2 Device certificate and trust (contract: `Device.added_by_signature`)
 
 ```
-cert_body  = "uotp/devcert/v1" || vault_id[16] || sign_pk[32] || box_pk[32] || u64be created_unix_s
-self_sig   = SIGN(sign_sk_of_that_device, cert_body)          proof of possession; server verifies
-vk_mac[e]  = MAC(K_cert(VK_e), u32be e || cert_body)           proof of VK knowledge; clients verify
+device_certificate = Ed25519(approver, lines("UOTP-DEVICE-v1", account_id, device_id,
+                                              b64u(ed25519_pk), b64u(x25519_pk)))
 ```
 
-- A device creates its own certificate as soon as it holds `VK` (after pairing, password or
-  recovery enrollment) and uploads it. The server stores `cert_body`, `self_sig` and the map
-  `epoch -> vk_mac`; it cannot create a `vk_mac`, so it cannot add a device that clients trust.
-- At rotation the rotating device adds `vk_mac[e+1]` for every device that stays (it knows the
-  new `VK`); devices without a `vk_mac` for the current epoch are revoked.
-- **Pinning**: a client trusts a device's keys only after verifying `self_sig` and `vk_mac` for
-  an epoch whose `VK` it holds. It keeps the trusted set locally and shows a warning when the
-  server lists a device it cannot verify.
+Each client keeps a **pinned device set** (device id → Ed25519 key) and only accepts heads and
+sealed keys signed by a pinned, non-revoked device:
 
-### 5.3 Vault key grant (to a device)
+- the device pins itself; the bootstrap device starts the set;
+- a device added by pairing is pinned when its certificate verifies with a pinned approver;
+- the joining device pins the approver whose key it read from the QR code (§5.4);
+- devices with `enrolled_via` `token` or `bootstrap` that no pinned device vouched for are shown
+  with a warning and pinned only after the user confirms them on this device (the server could
+  otherwise inject a device of its own). A device enrolled by password or recovery key trusts the
+  device list it finds at enrollment and flags it the same way (trust on first use).
+
+### 5.3 Sealed vault key (contract: `SealedVaultKey`)
 
 ```
-grant_plain = "uotp/grant/v1" || vault_id[16] || u32be key_epoch || VK_e[32]
-sealed      = crypto_box_seal(grant_plain, recipient.box_pk)          (65 + 48 = 113 bytes)
-grant_sig   = SIGN(granter.sign_sk, "uotp/grantsig/v1" || recipient.fpr || sealed)
+grant_plain      = "UOTP-GRANT-v1" || u32be key_epoch || VK_e[32] || UTF8(account_id)
+sealed_vault_key = crypto_box_seal(grant_plain, recipient.x25519_pk)      (75 + 48 = 123 bytes)
+seal_signature   = Ed25519(sealer, lines("UOTP-SEAL-v1", account_id, key_epoch,
+                                          recipient_device_id, b64u(SHA-256(sealed_vault_key))))
 ```
 
-A sealed box is anonymous (anyone, including the server, can seal to a public key), so the
-recipient accepts a grant only if `grant_sig` verifies with a **pinned** device key (or the
-pairing partner confirmed by the SAS, §5.4) and the `vault_id`/`key_epoch` inside match.
+A sealed box is anonymous (anyone, the server included, can seal to a public key), so the
+recipient opens it only if `seal_signature` verifies with a **pinned** device key, and accepts the
+key only if the `key_epoch` and `account_id` inside match.
 
-### 5.4 Pairing a new device (QR + 6 words)
+### 5.4 Pairing a new device (QR + 6 words; contract: `/otp/v1/pairings`)
 
-1. New device **N** generates its keys and opens an enrollment session on the server with an
-   enrollment token (API: `contracts/openapi.yaml`). The server returns `session_id`.
-2. N shows a QR code: `uotp://pair?v=1&sid=<session_id>&fpr=<b64u fpr_N>&srv=<server base URL>`.
-3. Existing device **E** scans it, fetches the session's public keys from the server and checks
-   `fpr(sign_pk, box_pk) == fpr_N` from the QR (the QR is out of band, so the server cannot swap
-   N's keys). E posts its own public keys to the session.
-4. Both show 6 words: `sas = H("uotp/sas/v1" || fpr_E || fpr_N)`; the first 66 bits (big-endian
-   bit order) are split into 6 groups of 11 bits, each an index into the BIP-39 list. N computes
-   the same with E's keys from the session. The user confirms they match on both screens: this
-   is what proves to **N** that it talks to E and not to the server.
-5. E uploads to the session:
+1. Existing device **A** calls `POST /otp/v1/pairings` and shows a QR code:
+   `uotp://pair?v=1&s=<server base URL, percent-encoded>&p=<pairing_id>&k=<pairing secret>&a=<b64u A.ed25519_pk>`.
+   The QR carries A's whole public key (43 characters), not a shortened fingerprint.
+2. New device **B** scans it, generates its keys and calls `.../join`. It immediately shows the
+   six SAS words.
+3. A gets the `pairing` event, reads B's keys with `GET /otp/v1/pairings/{id}` and shows the six
+   words too:
    ```
-   bundle       = JSON {"v":1,"vault_id":…,"key_epoch":e,"vk":b64u,"head_version":n,"items_digest":b64u}
-   sealed       = crypto_box_seal("uotp/pair/v1" || bundle, N.box_pk)
-   bundle_sig   = SIGN(E.sign_sk, "uotp/pairsig/v1" || session_id (UTF-8) || fpr_N || sealed)
+   sas   = BLAKE2b-256("UOTP-SAS-v1" || A.ed25519_pk || B.ed25519_pk || B.x25519_pk)
+   words = the first 66 bits of sas (big-endian bit order), 6 groups of 11 bits, each an index
+           into the BIP-39 English list
    ```
-6. N verifies `bundle_sig` with E's SAS-confirmed key, opens the box, checks the prefix, adopts
-   `VK`, pins E, pins `head_version`/`items_digest` as its rollback floor, creates its own
-   certificate (§5.2) and registers.
+   B takes `A.ed25519_pk` from the QR code (out of band), A takes B's keys from the server. If the
+   server swapped B's keys, the words differ: the user compares them on both screens and A
+   approves only if they match.
+4. A calls `.../approve` with B's device certificate (§5.2) and `VK` sealed to B (§5.3).
+5. B polls `.../result`, checks that `approver.ed25519_public_key` equals the key in the QR,
+   verifies the certificate and the seal signature with it, opens the seal, pins A, pulls the
+   vault and verifies its head (signed by a pinned device) before trusting any item.
 
-If no other device is available, N enrolls with the master password (kind 1 wrap) or the
-recovery key (kind 2 wrap) instead; it still needs an enrollment token.
-
----
+Without another device, B enrolls with an enrollment token and the master password (kind 1) or
+the recovery key (kind 2) from `GET /otp/v1/recovery/keys`.
 
 ## 6. Vault items
 
@@ -281,7 +294,7 @@ compatibility). Version 1 fields:
 | `notes` | string | |
 | `favorite` | bool | |
 | `created`, `updated` | int | ms since the Unix epoch |
-| `updated_by` | string | `device_id` of the last writer (merge tie-breaker) |
+| `updated_by` | string | `device_id` of the last writer, `local` offline (merge tie-breaker) |
 
 Before encryption the JSON is padded with `sodium_pad(…, 256)` (ISO/IEC 7816-4: `0x80` then
 zeros up to the next multiple of 256), so the server only learns the length in 256-byte buckets.
@@ -291,60 +304,52 @@ Maximum padded plaintext: 60 KiB.
 
 ```
 blob = u8 0x01 || u32be key_epoch || nonce[24] || AEAD(K_item(VK_key_epoch), nonce, padded, AD)
-AD   = "uotp/item/v1" || vault_id[16] || item_id[16] || u64be item_version || u32be key_epoch
+AD   = "UOTP-ITEM-v1" || u8 len(account_id) || UTF8(account_id) || item_id[16]
+       || u64be item_version || u32be key_epoch
 ```
 
-- `item_id`: random UUIDv4 chosen by the creating client.
-- `item_version`: per-item revision chosen by the client: 1 on creation, +1 on every change,
-  including the deletion (tombstone) and re-encryption at rotation. The server must require it
-  to increase strictly per item.
-- Binding `vault_id`, `item_id`, `item_version` and `key_epoch` means the server can neither
-  move a blob to another item or vault nor present it under another version: decryption fails.
-- Blob size: 1 + 4 + 24 + padded + 16 bytes; at most 61 485 bytes (< 64 KiB).
-- A **tombstone** is the pair `(item_id, item_version)` with no blob.
+- `item_id`: random UUIDv4 chosen by the creating client (16 bytes here, canonical lower-case text
+  in the API).
+- `item_version`: the contract's item `version`, i.e. **the vault version of the commit that writes
+  the item**. A commit always lands at `base_version + 1`, so the client encrypts with that value;
+  after a `409 version_conflict` it re-encrypts with the new one (cheap). Offline-only vaults use
+  `account_id = ""` and a local per-item counter.
+- Binding `account_id`, `item_id`, `item_version` and `key_epoch` means the server can neither
+  move a blob to another item or account nor present it under another version: decryption fails.
+- Blob size: 1 + 4 + 24 + padded + 16 bytes; at most 61 485 bytes (< 64 KiB, the contract limit).
+- A deletion is a tombstone (`deleted: true`, no blob).
 
-The same blob format is used in the local Room database and on the server, so sync uploads the
-stored bytes as they are.
+The same blob format is used in the local Room database and on the server, so a synced item is
+uploaded as stored.
 
----
-
-## 7. Vault head: signed version numbers (rollback protection)
+## 7. Vault head: signed version numbers (rollback protection; contract "Vault model")
 
 ```
-entry(i)     = item_id[16] || u64be item_version || u8 state || blob_hash[32]
-               state 0 = live, blob_hash = H(blob);  state 1 = tombstone, blob_hash = 32 zero bytes
-items_digest = H(entry(i1) || entry(i2) || …)   entries sorted by item_id bytes, ascending
-               (empty vault: H(empty string))
-head_body    = "uotp/head/v1" || vault_id[16] || u64be head_version || u32be key_epoch || items_digest[32]
-head_sig     = SIGN(signer.sign_sk, head_body)
+manifest  = concatenation over every LIVE item after the commit, sorted by item_id text, of
+            item_id ":" item_version ":" b64u(SHA-256(blob)) "\n"          (empty vault: "")
+signature = Ed25519(signer, lines("UOTP-HEAD-v1", account_id, version, key_epoch,
+                                   signed_by_device_id, b64u(SHA-256(manifest))))
 ```
 
-- The server keeps one monotonic `head_version` per vault. A commit is optimistic: the client
-  sends `base_version` and the signed head for `head_version = base_version + 1`, computed over
-  the full item set **after** its changes. The server accepts the commit only if
-  `base_version` equals the current version (else 409, the client pulls, merges, re-signs).
-- The server stores `head_body` fields, `head_sig` and the signer's `device_id`, and returns them
-  with every pull.
-- A client accepts a pulled state only if: the signer is a pinned, non-revoked device; the
-  signature verifies; recomputing `items_digest` over its merged local state gives the signed
-  value; and `head_version` ≥ the highest version it has seen (equal versions must have equal
-  digests). Otherwise it refuses the state and reports `vault.rollback_rejected`.
-- Tombstones stay in the digest (they are small); purging them needs a rotation-style commit.
+- The server keeps one monotonic `version` per vault. A commit sends `base_version` and the
+  signed head for `version = base_version + 1`, computed over the full item set **after** its
+  changes; the server recomputes the manifest, verifies the signature and applies the commit only
+  if `base_version` is current (else `409`: pull, merge, re-encrypt, re-sign).
+- A client accepts a pulled state only if: the signer is a pinned, non-revoked device (§5.2); the
+  signature verifies; the manifest recomputed from its merged local items matches; and `version`
+  is at least the highest version it has accepted (equal versions must have equal manifests).
+  Otherwise it keeps its local state and reports `vault.rollback_rejected`. Version 0 (empty vault,
+  unsigned) is accepted only on a device that has never accepted a version.
 
----
-
-## 8. Rotation (after revoking a device)
+## 8. Rotation (after revoking a device; contract: `POST /otp/v1/vault/rotate`)
 
 1. The rotating device asks for the master password (or the recovery key in paranoid mode).
-2. It generates `VK_{e+1}`, re-encrypts every item (new nonce, `item_version + 1`,
-   `key_epoch = e+1`), seals grants (§5.3) for every remaining pinned device, adds
-   `vk_mac[e+1]` to their certificates, writes new kind-1 and kind-2 wraps (`KEK_rk` from the
-   kind-3 wrap) and signs the new head.
-3. Everything goes in one atomic commit; the server deletes the revoked device's grants.
+2. It generates `VK_{e+1}`, re-encrypts every live item for `version = base + 1` and
+   `key_epoch = e+1`, seals `VK_{e+1}` to every active device (§5.3), re-creates the kind 1, 2, 3
+   wraps (`KEK_rk` from the kind 3 wrap) and signs the new head.
+3. Everything goes in one atomic request; the server deletes older wraps and sealed keys.
 
 Old blobs kept in old backups stay readable with the old `VK` (accepted in `design.md` §3.6).
-
----
 
 ## 9. Local storage on Android (not on the wire)
 
@@ -416,36 +421,25 @@ https://github.com/muquit/twofa-rescue/blob/main/docs/ente-auth-export-encryptio
 
 ## 12. What the server must do (and must not)
 
-- Treat every blob, wrap, sealed grant and pairing bundle as opaque bytes (`b64u` in JSON).
-  Validate sizes only: wraps 73 bytes; grants 113 bytes; item blobs 1 + 4 + 24 + 16 + k·256 bytes
-  with 1 ≤ k ≤ 240 (so ≤ 61 485); head signature 64 bytes.
-- Recompute `device_id` from `sign_pk || box_pk` (§5.1) and verify `self_sig` on `cert_body`
-  with PyNaCl (`VerifyKey(sign_pk).verify(cert_body, self_sig)`), rejecting a mismatch.
-- Verify request signatures (§12.1) with the registered `sign_pk`.
-- Optionally verify `head_sig` with the signer's `sign_pk` (cheap, catches buggy clients). It
-  cannot check `items_digest` semantics beyond recomputing it from the stored blobs, which it may
-  also do (all inputs are ciphertext and versions).
-- Enforce `head_version = base_version + 1`, strictly increasing `item_version` per item, and
-  atomic commits.
+- Treat every blob, wrap, sealed key and KDF parameter set as opaque bytes (base64url). Validate
+  sizes only: `password_kdf` 29 bytes; `password_wrap` 73 or 146; `recovery_wrap` 73; sealed
+  vault keys 123; item blobs 1 + 4 + 24 + 16 + k·256 bytes with 1 ≤ k ≤ 240 (≤ 61 485).
+- Verify the four signed statements of the contract (request, head, seal, device certificate).
 - Never receive or log a password, a KEK, `VK` or a recovery key; never try to derive anything
-  from wraps. Rate-limit the endpoint that returns wraps and KDF parameters (offline brute force
-  needs them).
+  from wraps. Rate-limit `GET /otp/v1/recovery/keys` hard (offline brute force needs it).
 
-### 12.1 Request signing (proposal; `contracts/openapi.yaml` is authoritative for header names)
+### 12.1 Request signing (contract "Authentication")
 
 ```
-string_to_sign = "uotp/req/v1" "\n" METHOD "\n" PATH_AND_QUERY "\n" TIMESTAMP "\n" NONCE "\n" hex(SHA-256(body))
-headers: X-UOTP-Device: <device_id>
-         X-UOTP-Timestamp: <unix seconds, decimal>
-         X-UOTP-Nonce: <b64u of 16 random bytes>
-         X-UOTP-Signature: <b64u SIGN(sign_sk, string_to_sign)>
+message = lines("UOTP-REQ-v1", METHOD, path_and_query, device_id_or_"pending",
+                timestamp, nonce_b64u, b64u(SHA-256(body)))
+headers: X-UOTP-Device, X-UOTP-Timestamp (Unix seconds), X-UOTP-Nonce (16-32 random bytes,
+         b64u), X-UOTP-Signature (b64u Ed25519 of message)
 ```
 
-`METHOD` upper case; `PATH_AND_QUERY` exactly as sent on the wire (percent-encoding kept, no
-scheme/host); empty body hashes the empty string. The server accepts ±60 s of skew and keeps
-nonces for 120 s per device to reject replays.
-
----
+`path_and_query` is the path exactly as sent plus `?` and the raw query when there is one; an
+empty body hashes the empty string. The server accepts ±60 s of skew (`stale_request` carries
+`server_time`, which the client uses to correct its clock offset) and rejects replayed nonces.
 
 ## 13. Test vectors
 
@@ -459,32 +453,30 @@ uv run --no-project --with pynacl==1.6.2 python generate_vectors.py > vectors.js
 | Vector | Kind | Covers |
 |---|---|---|
 | `password_kdf[*]` | deterministic | NFC + UTF-8 + Argon2id; `[1]` is non-ASCII (NFC changes it) |
-| `wraps.*` | deterministic | kinds 1, 2, 3; BIP-39 words of `RK`; `KEK_rk` |
-| `subkeys` | deterministic | `K_item`, `K_cert` via `crypto_kdf` |
-| `item` | deterministic | padding, AD, blob |
-| `devices` | deterministic | fingerprints, `device_id`, SAS words, certificate, `self_sig`, `vk_mac` |
-| `head` | deterministic | `items_digest` with a tombstone, empty digest, head signature |
-| `request_signature` | deterministic | canonical string and signature |
-| `grant`, `pairing` | decrypt-only | sealed boxes (random ephemeral key) and their signatures |
+| `wraps.*` | deterministic | kinds 1, 2, 3, their API encoding; BIP-39 words of `RK`; `KEK_rk` |
+| `item` | deterministic | `K_item`, padding, AD (account and offline), blob |
+| `devices` | deterministic | SAS words, device certificate |
+| `head` | deterministic | manifest, head message and signature |
+| `request_signature` | deterministic | canonical request and signature |
+| `sealed_vault_key` | decrypt-only | sealed box (random ephemeral key) and seal signature |
 | `export` | decrypt-only | `.uotp` file with 64-byte chunks (several chunks) |
 | `ente_encrypted_export` | decrypt-only | Ente's JSON format |
 
 The vectors use cheap Argon2id parameters (`opslimit = 2`, `memlimit = 16 MiB`) so tests stay
-fast; they are inside the reader limits. Ed25519 keys are derived from fixed 32-byte seeds
-(`crypto_sign_seed_keypair`) and X25519 secret keys are fixed bytes.
+fast; they are inside the reader limits. Ed25519 keys come from fixed 32-byte seeds
+(`crypto_sign_seed_keypair`), X25519 secret keys are fixed bytes. The signed-statement vectors
+were also checked with the server's own `server/src/ultimateotp/signing.py` (branch `feat/server`).
 
 The Android unit tests (`:core:crypto`) load this file and check every vector.
-
----
 
 ## 14. Deviations from `design.md`
 
 | design.md | here | why |
 |---|---|---|
 | Lazysodium or Tink + Bouncy Castle | ionspin libsodium bindings | §1 |
-| Argon2id MODERATE (ops 3, 256 MiB) | sensitive (ops 4, 1 GiB) with fallback ladder down to (16, 256 MiB) | owner decision 3 for exports; the vault KEK gets the same since it is brute-forceable from a server dump |
+| Argon2id MODERATE (ops 3, 256 MiB) | sensitive (ops 4, 1 GiB) with a fallback ladder down to (16, 256 MiB) | owner decision 3 for exports; the vault KEK gets the same since it is brute-forceable from a server dump |
 | Export: age preferred | own `.uotp` container (Argon2id + secretstream) | owner decision 3 |
-| Recovery key wraps VK (rotation unclear) | kind 2 wrap + kind 3 (`KEK_rk` under the password) | lets rotation re-create the recovery wrap without the recovery key, all wraps stay server-unforgeable |
-| Device list signed by an existing device | every device self-certifies, trusted by `vk_mac` (needs `VK`) | also covers devices enrolled by password/recovery, where no other device signs |
-| AD = item_id ‖ vault_id ‖ version | adds `key_epoch` and a label; `item_version` is per item | binds the key epoch; per-item versions can be bound before the commit is accepted |
-| `head_sig` over `hash(sorted item_id:version)` | over item ids, versions, tombstone flag and blob hashes | also detects a swapped blob with the same version |
+| Recovery key wraps VK (rotation unclear) | kind 2 wrap + kind 3 (`KEK_rk` under the password) inside `password_wrap` | rotation re-creates the recovery wrap without the recovery key; all wraps stay server-unforgeable |
+| New device shows the QR, existing device scans | existing device shows the QR (pairing session of the contract) | the contract's flow; the QR carries A's full public key and the SAS still protects B's keys |
+| AD = item_id ‖ vault_id ‖ version | adds `key_epoch`, a label, and uses the commit version and `account_id` of the contract | binds the key epoch; ids as the API defines them |
+| `head_sig` over `hash(sorted item_id:version)` | the contract's manifest (ids, versions and SHA-256 of each blob) | also detects a swapped blob with the same version |
