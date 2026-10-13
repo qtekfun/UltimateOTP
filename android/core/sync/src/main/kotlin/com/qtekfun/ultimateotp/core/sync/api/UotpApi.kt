@@ -239,6 +239,13 @@ class UotpApi(
     ): SrpLoginResponse =
         call("POST", "/otp/v1/srp/verify", encode(SrpVerifyRequest.serializer(), request), signer, null, SrpLoginResponse.serializer())
 
+    /** Creates an account and its first device; [signer] is the new device with `X-UOTP-Device: pending`. */
+    suspend fun signup(
+        signer: Signer,
+        request: SignupRequest,
+    ): EnrollResponse =
+        call("POST", "/otp/v1/signup", encode(SignupRequest.serializer(), request), signer, null, EnrollResponse.serializer())
+
     suspend fun sessions(signer: Signer): SessionList = call("GET", "/otp/v1/sessions", null, signer, null, SessionList.serializer())
 
     companion object {

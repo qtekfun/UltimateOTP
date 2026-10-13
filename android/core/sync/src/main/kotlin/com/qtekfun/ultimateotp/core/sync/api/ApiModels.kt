@@ -325,6 +325,15 @@ data class SrpLoginResponse(
     val keys: KeyAttributes,
 )
 
+/** `POST /otp/v1/signup` (contract 1.1.0): the account, its first device and its key bundle with `srp`. */
+@Serializable
+data class SignupRequest(
+    val email: String,
+    @SerialName("email_code") val emailCode: String? = null,
+    val device: NewDevice,
+    val keys: KeyBundleDto,
+)
+
 @Serializable
 data class SessionInfo(
     @SerialName("device_id") val deviceId: String,
