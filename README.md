@@ -15,7 +15,9 @@ enrollment token from the server's CLI and QR pairing remain available as advanc
 - `android/`: Android app (Kotlin, Jetpack Compose)
 - `contracts/`: HTTP API contract (OpenAPI)
 - Tests: what each layer proves, how to run it and what still needs a real phone, see [docs/testing.md](docs/testing.md)
-- Releases: built and signed by GitHub Actions on a `v*` tag, see [RELEASING.md](RELEASING.md)
+- Releases: built and signed by GitHub Actions on a `v*` tag, see [RELEASING.md](RELEASING.md) and [CHANGELOG.md](CHANGELOG.md); builds are reproducible ([docs/reproducible-builds.md](docs/reproducible-builds.md))
+- Security: [SECURITY.md](SECURITY.md) (reporting, scope) and [docs/security-review.md](docs/security-review.md) (package for an external review)
+- F-Droid: draft recipe and notes in [docs/fdroid/](docs/fdroid/README.md), checklist in [docs/store-checklist.md](docs/store-checklist.md)
 
 ## Status
 

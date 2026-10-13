@@ -1,0 +1,1 @@
+Primera versión. Autenticador sin conexión (TOTP, HOTP, Steam), escaneo de QR, importación desde Ente Auth y Google Authenticator, exportación cifrada, bloqueo de la app y sincronización cifrada opcional con tu propio servidor. Desarrollo temprano, sin auditar.

@@ -17,3 +17,9 @@ paths = [
   '''^docs/crypto-vectors/''',
   '''^android/[^/]+(/[^/]+)?/src/(test|androidTest|androidTestDebug|testFixtures)/''',
 ]
+
+[[allowlists]]
+description = "Public signing-certificate SHA-256 that F-Droid pins (not a secret)"
+paths = ['''^docs/fdroid/com\.qtekfun\.ultimateotp\.yml$''']
+regexes = ['''^[0-9a-f]{64}$''']
+condition = "AND"

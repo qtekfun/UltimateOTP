@@ -65,6 +65,11 @@ android {
         jniLibs.useLegacyPackaging = false
         // JNA still ships ABIs Android dropped long ago.
         jniLibs.excludes += listOf("lib/armeabi/**", "lib/mips/**", "lib/mips64/**")
+        // Reproducible builds: without this AGP strips the prebuilt libraries with the NDK it finds in
+        // the SDK, so the APK depends on whether an NDK is installed and on its version (a build
+        // machine without one keeps the symbols). Packaging them as they come makes the APK the
+        // same everywhere (docs/reproducible-builds.md).
+        jniLibs.keepDebugSymbols += "**/*.so"
     }
 }
 
