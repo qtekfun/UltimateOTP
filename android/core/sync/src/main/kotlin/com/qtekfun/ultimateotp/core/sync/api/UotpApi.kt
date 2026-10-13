@@ -45,6 +45,8 @@ class UotpApi(
     baseUrl: String,
     private val http: OkHttpClient,
     private val nowSeconds: () -> Long = { System.currentTimeMillis() / MILLIS },
+    /** Sent as `X-UOTP-App-Version` (session metadata, decision 9); not signed. */
+    val appVersion: String? = null,
 ) {
     private val base: HttpUrl = baseUrl.trimEnd('/').toHttpUrl()
     private val json =
@@ -90,6 +92,7 @@ class UotpApi(
                 .header("X-UOTP-Signature", signer.keys.signB64u(message))
         }
         if (bearer != null) builder.header("Authorization", "Bearer $bearer")
+        if (signer != null && appVersion != null) builder.header("X-UOTP-App-Version", appVersion)
         val requestBody = body?.toRequestBody(JSON_TYPE)
         return builder
             .method(
@@ -213,6 +216,30 @@ class UotpApi(
         signer: Signer,
         request: RotateRequest,
     ): VaultHead = call("POST", "/otp/v1/vault/rotate", encode(RotateRequest.serializer(), request), signer, null, VaultHead.serializer())
+
+    suspend fun requestEmailCode(email: String): Accepted =
+        call("POST", "/otp/v1/login/email-code", encode(EmailRequest.serializer(), EmailRequest(email)), null, null, Accepted.serializer())
+
+    suspend fun srpAttributes(email: String): SrpAttributes =
+        call(
+            "POST",
+            "/otp/v1/srp/attributes",
+            encode(EmailRequest.serializer(), EmailRequest(email)),
+            null,
+            null,
+            SrpAttributes.serializer(),
+        )
+
+    suspend fun srpSession(request: SrpSessionRequest): SrpSession =
+        call("POST", "/otp/v1/srp/session", encode(SrpSessionRequest.serializer(), request), null, null, SrpSession.serializer())
+
+    suspend fun srpVerify(
+        signer: Signer,
+        request: SrpVerifyRequest,
+    ): SrpLoginResponse =
+        call("POST", "/otp/v1/srp/verify", encode(SrpVerifyRequest.serializer(), request), signer, null, SrpLoginResponse.serializer())
+
+    suspend fun sessions(signer: Signer): SessionList = call("GET", "/otp/v1/sessions", null, signer, null, SessionList.serializer())
 
     companion object {
         const val PENDING = "pending"

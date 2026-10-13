@@ -8,6 +8,7 @@ import com.qtekfun.ultimateotp.core.sync.api.ApiException
 import com.qtekfun.ultimateotp.core.sync.api.UotpApi
 import com.qtekfun.ultimateotp.core.sync.fake.FakeUotpServer
 import com.qtekfun.ultimateotp.core.sync.fake.InMemorySyncStore
+import com.qtekfun.ultimateotp.core.sync.login.SrpEmailLogin
 import com.qtekfun.ultimateotp.core.sync.model.Merge
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -67,6 +68,29 @@ class SyncEngineTest {
             a.engine.trustDevice(viewB.deviceId)
             a.engine.sync()
             assertEquals(listOf("alice", "bob"), a.store.items().map { it.otp.label })
+        }
+
+    @Test
+    fun `email code and SRP login from anywhere, like Ente`() =
+        runBlocking {
+            val a = bootstrapped()
+            val b = device()
+            val login = SrpEmailLogin(b.engine, { UotpApi(it, http, nowSeconds = { server.now }) })
+            val (ticket, _) = login.requestCode(server.url, server.email)
+            assertTrue(ticket.codeRequired)
+            assertThrows<ApiException> { runBlocking { login.verifyCode(ticket, "000000") } }
+            login.requestCode(server.url, server.email)
+            login.verifyCode(ticket, server.lastEmailCode!!)
+            assertThrows<com.qtekfun.ultimateotp.core.crypto.CryptoException.AuthenticationFailed> {
+                runBlocking { login.complete(ticket, "wrong password", "B") }
+            }
+            login.requestCode(server.url, server.email)
+            login.verifyCode(ticket, server.lastEmailCode!!)
+            login.complete(ticket, "correct horse", "Phone B")
+            assertInstanceOf(SyncResult.Synced::class.java, b.engine.sync())
+            assertEquals(listOf("alice"), b.store.items().map { it.otp.label })
+            assertEquals(2, b.engine.sessions().size)
+            a.engine.sync()
         }
 
     @Test

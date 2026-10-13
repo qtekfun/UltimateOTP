@@ -126,4 +126,5 @@
     <string name="revoke">Revoke</string>
     <string name="upload_local">Upload my local copy</string>
     <string name="upload_local_body">Use this only after the server was restored from an old backup: every code on this device is sent to the server again.</string>
+    <string name="wrong_password_again">Wrong password. Codes work once: request a new one and try again.</string>
 </resources>
