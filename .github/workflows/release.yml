@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: 2026 UltimateOTP contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# Release of the Android app (see RELEASING.md).
+# Release of the Android app and the server image (see RELEASING.md).
 # - Tag vX.Y.Z or vX.Y.Z-rc.N (push): checks the tag against the app's versionName, runs the checks,
-#   builds and verifies the signed APK, then publishes a GitHub Release with
+#   builds and verifies the signed APK, builds the server image (amd64 + arm64) and pushes it to
+#   GHCR as `ghcr.io/<owner>/ultimateotp-server:X.Y.Z`, then publishes a GitHub Release with
 #   `UltimateOTP-X.Y.Z.apk` and its SHA-256. 0.x versions and -rc tags are pre-releases.
 # - Manual dispatch: a dry run that builds and checks everything and publishes nothing. Without the
 #   signing secrets the dry-run APK is unsigned.
@@ -115,8 +116,53 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  publish:
+  image:
+    # After the APK: a failed APK build never leaves a pushed image tag behind.
     needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Image name
+        id: name
+        env:
+          OWNER: ${{ github.repository_owner }}
+        # GHCR repository names must be lowercase.
+        run: echo "image=ghcr.io/${OWNER,,}/ultimateotp-server" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - if: needs.apk.outputs.publish == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      # Built from the repository root: the image needs server/ and contracts/db/migrations.
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: server/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ needs.apk.outputs.publish == 'true' }}
+          tags: ${{ steps.name.outputs.image }}:${{ needs.apk.outputs.version }}
+          provenance: true
+          sbom: true
+
+  publish:
+    needs: [apk, image]
     if: needs.apk.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -133,6 +179,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.apk.outputs.version }}
           PRERELEASE: ${{ needs.apk.outputs.prerelease }}
+          IMAGE: ${{ needs.image.outputs.image }}
+          DIGEST: ${{ needs.image.outputs.digest }}
         run: |
           apk="UltimateOTP-$VERSION.apk"
           sha256sum -c "$apk.sha256"
@@ -143,6 +191,8 @@ jobs:
           its own; sync needs a self-hosted UltimateOTP server (see docs/deploy.md).
 
           SHA-256: \`$(cut -d' ' -f1 "$apk.sha256")\`
+
+          Server image: \`$IMAGE:$VERSION\` (\`$DIGEST\`)
           EOF
           if [[ "$PRERELEASE" == true ]]; then flag=--prerelease; else flag=--latest; fi
           gh release create "$GITHUB_REF_NAME" "$apk" "$apk.sha256" --verify-tag \
