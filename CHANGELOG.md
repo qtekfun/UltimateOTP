@@ -35,6 +35,17 @@ not 0.1.2, whose release build crashes on sign-up (see Fixed).
 - Show/hide toggle on the password fields and a button to copy the 24 recovery words. Branch
   `feat/show-password`, commit `3d0a989`.
 
+### Changed
+
+- Release builds are reproducible across machines: the prebuilt native libraries are packaged unstripped,
+  so the APK no longer depends on whether the build machine has an NDK (the stripped and unstripped
+  builds differed in every `.so`). The APK is about 190 KB larger. See docs/reproducible-builds.md.
+- Gradle dependency verification: `android/gradle/verification-metadata.xml` pins the SHA-256 of every
+  dependency and plugin; builds fail on an unknown or changed artifact.
+- Dependabot for Gradle, uv, Docker and GitHub Actions; F-Droid store texts (English, Spanish),
+  `SECURITY.md`, a security review package (docs/security-review.md) and a draft F-Droid recipe
+  (docs/fdroid/).
+
 ## [0.1.2] - 2026-10-13
 
 Android `versionCode` 3. Tag `v0.1.2`.
