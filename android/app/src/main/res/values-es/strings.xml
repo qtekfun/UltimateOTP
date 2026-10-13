@@ -98,6 +98,7 @@
     <string name="fail_network">No se pudo conectar con el servidor.</string>
     <string name="fail_secret">Contraseña o clave de recuperación incorrecta.</string>
     <string name="fail_lan">El alta solo funciona desde tu red local. Indica la dirección de red local o permite el alta remota.</string>
+    <string name="fail_insecure_url">La dirección del servidor debe empezar por https://. No se acepta http:// sin cifrar.</string>
     <string name="fail_rejected">Los datos del servidor no pasaron la verificación y no se usaron. Tus códigos locales no han cambiado.</string>
     <string name="fail_refused">El servidor rechazó la solicitud (token o sesión caducados o ya usados).</string>
     <string name="fail_server">El servidor ha notificado un error.</string>
@@ -307,4 +308,8 @@
     <string name="status_synced">Al día</string>
     <string name="pair_add_body">Muestra un código QR para que lo escanee un dispositivo nuevo</string>
     <string name="upload_local_hint">Solo tras restaurar el servidor</string>
+    <string name="moved_to_trash">Movida a la papelera</string>
+    <string name="undo">Deshacer</string>
+    <string name="move_up">Subir</string>
+    <string name="move_down">Bajar</string>
 </resources>

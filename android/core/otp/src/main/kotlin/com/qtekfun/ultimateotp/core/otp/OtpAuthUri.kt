@@ -35,12 +35,12 @@ object OtpAuthUri {
         val queryStart = afterHost.indexOf('?')
         val rawLabel = if (queryStart < 0) afterHost else afterHost.substring(0, queryStart)
         val query = if (queryStart < 0) emptyMap() else parseQuery(afterHost.substring(queryStart + 1))
-        return build(host, decode(rawLabel, plusIsSpace = false), query)
+        return build(host, splitLabel(rawLabel, query["issuer"]), query)
     }
 
     private fun build(
         host: String,
-        label: String,
+        labelParts: Pair<String, String>,
         query: Map<String, String>,
     ): OtpParams {
         val type = parseType(host, query)
@@ -50,7 +50,7 @@ object OtpAuthUri {
             } catch (e: IllegalArgumentException) {
                 throw OtpUriException("Secret is not valid base32", e)
             }
-        val (labelIssuer, account) = splitLabel(label)
+        val (labelIssuer, account) = labelParts
         val steam = type == OtpType.STEAM
         val counter = query["counter"]?.let { it.trim().toLongOrNull() ?: fail("Invalid counter") }
         return try {
@@ -97,10 +97,37 @@ object OtpAuthUri {
         return issuer?.ifEmpty { null }
     }
 
-    private fun splitLabel(label: String): Pair<String, String> {
-        val colon = label.indexOf(':')
-        if (colon < 0) return "" to label.trim()
-        return label.substring(0, colon).trim() to label.substring(colon + 1).trim()
+    /**
+     * Splits the *raw* label at its first literal `:` (Key URI Format): a colon inside a name is
+     * percent-encoded by writers, so it is never taken for the separator. Writers that encode the
+     * separator too (`Issuer%3Aaccount`, as some do) are recognised by the `issuer` parameter.
+     */
+    private fun splitLabel(
+        rawLabel: String,
+        issuerParam: String?,
+    ): Pair<String, String> {
+        val colon = rawLabel.indexOf(':')
+        val label = decode(rawLabel, plusIsSpace = false)
+        val issuer = issuerParam?.trim().orEmpty()
+        return when {
+            colon >= 0 -> {
+                decode(rawLabel.substring(0, colon), plusIsSpace = false).trim() to
+                    decode(rawLabel.substring(colon + 1), plusIsSpace = false).trim()
+            }
+
+            issuer.isNotEmpty() && label.startsWith("$issuer:") -> {
+                issuer to label.substring(issuer.length + 1).trim()
+            }
+
+            // Without an issuer parameter an encoded separator is all there is to go by.
+            issuer.isEmpty() && rawLabel.contains("%3A", ignoreCase = true) -> {
+                label.substringBefore(':').trim() to label.substringAfter(':').trim()
+            }
+
+            else -> {
+                "" to label.trim()
+            }
+        }
     }
 
     private fun parseQuery(query: String): Map<String, String> =
@@ -168,7 +195,8 @@ object OtpAuthUri {
     fun format(params: OtpParams): String {
         val label =
             if (params.issuer.isEmpty()) {
-                encode(params.label)
+                // A leading separator keeps a colon inside the name from being read as one.
+                (if (params.label.contains(':')) ":" else "") + encode(params.label)
             } else {
                 encode(params.issuer) + ":" + encode(params.label)
             }

@@ -44,5 +44,26 @@
                 <data android:scheme="uotp" />
             </intent-filter>
         </activity>
+
+        <!-- Autofill: offers the OTP code in fields that ask for one (docs/autofill.md). Unlock is
+             required before any code is produced; field contents are never stored. -->
+        <service
+            android:name=".autofill.UotpAutofillService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_AUTOFILL_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.autofill.AutofillService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.autofill"
+                android:resource="@xml/autofill_service" />
+        </service>
+
+        <activity
+            android:name=".autofill.AutofillAuthActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@style/Theme.UltimateOTP.Translucent" />
     </application>
 </manifest>

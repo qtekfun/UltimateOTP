@@ -5,6 +5,7 @@ package com.qtekfun.ultimateotp.ui.settings
 
 import android.app.ActivityManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -30,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -38,6 +40,7 @@ import com.qtekfun.ultimateotp.R
 import com.qtekfun.ultimateotp.core.crypto.PasswordKdf
 import com.qtekfun.ultimateotp.core.vault.ImportOutcome
 import com.qtekfun.ultimateotp.core.vault.VaultTransfer
+import com.qtekfun.ultimateotp.features.FeatureSettingsViewModel
 import com.qtekfun.ultimateotp.ui.components.PasswordField
 import com.qtekfun.ultimateotp.ui.components.rememberRetainedText
 import com.qtekfun.ultimateotp.util.AppLanguage
@@ -54,6 +57,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
+import android.provider.Settings as AndroidSettings
 
 /** One-line status of the last export or import. */
 sealed interface TransferStatus {
@@ -72,6 +76,11 @@ sealed interface TransferStatus {
     data object WrongPassword : TransferStatus
 
     data object Failed : TransferStatus
+
+    /** A file of an unsupported variant, with the reason in one fixed line (no file content). */
+    data class Unreadable(
+        val reason: String,
+    ) : TransferStatus
 }
 
 @HiltViewModel
@@ -149,6 +158,10 @@ class SettingsViewModel
                         TransferStatus.WrongPassword
                     }
 
+                    is ImportOutcome.Unreadable -> {
+                        TransferStatus.Unreadable(outcome.reason)
+                    }
+
                     else -> {
                         TransferStatus.Failed
                     }
@@ -172,7 +185,11 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onSync: () -> Unit,
     onSessions: () -> Unit,
+    onTrash: () -> Unit,
+    onAccount: () -> Unit,
+    onAutofillAssociations: () -> Unit,
     model: SettingsViewModel = hiltViewModel(),
+    features: FeatureSettingsViewModel = hiltViewModel(),
 ) {
     val settings by model.settings.collectAsState()
     val status by model.status.collectAsState()
@@ -195,6 +212,8 @@ fun SettingsScreen(
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) model.import(uri, null)
         }
+    val saveLog =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri -> uri?.let(features::saveLog) }
     SettingsContent(
         settings = settings,
         statusText = status?.let { statusText(it) },
@@ -219,7 +238,26 @@ fun SettingsScreen(
                 onExportEncrypted = { askExportPassword = true },
                 onExportPlain = { confirmPlain = true },
                 onImport = { importSource.launch(arrayOf("*/*")) },
+                onTrash = onTrash,
+                onAccount = onAccount,
+                onAutofillSettings = {
+                    val intent =
+                        Intent(AndroidSettings.ACTION_REQUEST_SET_AUTOFILL_SERVICE, "package:${context.packageName}".toUri())
+                    runCatching { context.startActivity(intent) }
+                },
+                onAutofillAssociations = onAutofillAssociations,
+                onShareLog = {
+                    val send =
+                        Intent(Intent.ACTION_SEND)
+                            .setType("text/plain")
+                            .putExtra(Intent.EXTRA_SUBJECT, "UltimateOTP error log")
+                            .putExtra(Intent.EXTRA_TEXT, features.logText())
+                    runCatching { context.startActivity(Intent.createChooser(send, null)) }
+                },
+                onSaveLog = { saveLog.launch("ultimateotp-error-log.txt") },
+                onClearLog = features::clearLog,
             ),
+        autofillEnabled = features.autofillEnabled(),
     )
     if (askExportPassword) {
         PasswordDialog(
@@ -266,6 +304,7 @@ private fun statusText(status: TransferStatus): String =
         TransferStatus.NeedsPassword -> stringResource(R.string.import_password_title)
         TransferStatus.WrongPassword -> stringResource(R.string.wrong_password)
         TransferStatus.Failed -> stringResource(R.string.transfer_failed)
+        is TransferStatus.Unreadable -> status.reason
     }
 
 /** Asks for a password; with [confirm] it must be typed twice and be at least 8 characters. */
@@ -332,6 +371,10 @@ private const val MIN_PASSWORD = 8
 @Composable
 fun durationText(seconds: Int): String =
     when {
+        seconds < 0 -> {
+            stringResource(R.string.lock_choice_never)
+        }
+
         seconds == 0 -> {
             stringResource(R.string.duration_immediately)
         }

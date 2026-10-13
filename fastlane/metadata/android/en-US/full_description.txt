@@ -1,0 +1,26 @@
+UltimateOTP is a two-factor authentication app that generates one-time codes (TOTP, HOTP and Steam Guard) on your phone. It works fully offline, on its own. If you want your codes on several devices, it can sync them through a server that you host yourself; the server only ever stores encrypted data.
+
+<b>Status: early development, not audited</b>
+This app has not been reviewed by an independent security expert yet. Do not rely on it as the only copy of the 2FA secrets of accounts you cannot afford to lose, and keep a backup. See the project's SECURITY.md for what is known to be missing.
+
+<b>Codes</b>
+• TOTP and HOTP with SHA-1, SHA-256 and SHA-512, and Steam Guard codes.
+• Add accounts by scanning a QR code, from an otpauth:// link, or by hand.
+• Search, tags and favourites.
+
+<b>Import and export</b>
+• Import from Ente Auth (plain and encrypted exports), from Google Authenticator migration codes and from lists of otpauth:// links.
+• Encrypted export to a .uotp file protected by a password of your own (Argon2id and XChaCha20-Poly1305), or a plain list behind a warning.
+
+<b>Protection on the phone</b>
+• Secrets are encrypted with a key kept in the Android Keystore; the app lock uses your biometrics or screen lock.
+• Screenshots and recent-apps previews are blocked. No backups to the cloud.
+
+<b>Optional sync with your own server</b>
+• Create an account with your email, a password and a 24-word recovery key, or add a device by scanning a QR code from one you already have.
+• Changes reach your other devices as they happen. Devices can be revoked from any other device.
+• The server never sees your secrets, labels or password. You need to run the UltimateOTP server yourself (Docker, see the project's documentation); there is no hosted service.
+
+<b>Private by design</b>
+• Only the camera permission (to scan QR codes) and internet (only to reach your own server).
+• No ads, no tracking, no analytics, no Google services. Free software (GPL-3.0-or-later).

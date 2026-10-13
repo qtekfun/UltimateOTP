@@ -18,6 +18,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.dp
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.qtekfun.ultimateotp.core.sync.model.VaultItem
+import com.qtekfun.ultimateotp.features.TrashContent
 import com.qtekfun.ultimateotp.ui.add.AddContent
 import com.qtekfun.ultimateotp.ui.codes.AddMode
 import com.qtekfun.ultimateotp.ui.codes.AddSheetContent
@@ -93,7 +94,11 @@ class ScreenshotTest(
             )
     }
 
-    @get:Rule val rule = createComposeRule()
+    @get:Rule(order = 0)
+    val activity = ComposeActivityRule()
+
+    @get:Rule(order = 1)
+    val rule = createComposeRule()
 
     private fun shot(
         name: String,
@@ -240,6 +245,20 @@ class ScreenshotTest(
                 onTrust = {},
                 onRevoke = {},
                 onBack = {},
+            )
+        }
+
+    @Test fun trash() =
+        shot("trash") {
+            TrashContent(
+                items = Fixtures.items.take(2).map { it.copy(trashed = true) },
+                server = null,
+                onBack = {},
+                onRestore = {},
+                onPurge = {},
+                onEmpty = {},
+                onLoadServer = {},
+                onRestoreFromServer = {},
             )
         }
 

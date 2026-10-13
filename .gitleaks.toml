@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 UltimateOTP contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# gitleaks configuration (CI job "gitleaks"). Everything gitleaks' default rules find in this
+# repository is a deterministic test value: RFC and PyNaCl vectors, fixtures of other apps' export
+# formats, `JBSWY3DPEHPK3PXP`. The allowlist is by path, so a real key committed anywhere else
+# (the app, the server, the workflows, the docs prose) is still reported.
+title = "UltimateOTP"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Test vectors, fixtures and test code"
+paths = [
+  '''^server/tests/''',
+  '''^docs/crypto-vectors/''',
+  '''^android/[^/]+(/[^/]+)?/src/(test|androidTest|androidTestDebug|testFixtures)/''',
+]
+
+[[allowlists]]
+description = "Public signing-certificate SHA-256 that F-Droid pins (not a secret)"
+paths = ['''^docs/fdroid/com\.qtekfun\.ultimateotp\.yml$''']
+regexes = ['''^[0-9a-f]{64}$''']
+condition = "AND"

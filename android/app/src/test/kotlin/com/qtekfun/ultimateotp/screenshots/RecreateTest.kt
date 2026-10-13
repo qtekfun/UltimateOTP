@@ -30,7 +30,11 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(application = android.app.Application::class, sdk = [34])
 class RecreateTest {
-    @get:Rule val rule = createComposeRule()
+    @get:Rule(order = 0)
+    val activity = ComposeActivityRule()
+
+    @get:Rule(order = 1)
+    val rule = createComposeRule()
 
     @Composable
     private fun Signup(step: SignupStep) {

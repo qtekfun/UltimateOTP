@@ -29,6 +29,8 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.qtekfun.ultimateotp.R
+import com.qtekfun.ultimateotp.auth.AuthGate
+import com.qtekfun.ultimateotp.auth.GateResult
 import com.qtekfun.ultimateotp.core.crypto.CryptoException
 import com.qtekfun.ultimateotp.core.sync.api.ApiException
 import com.qtekfun.ultimateotp.core.sync.login.AccountProblem
@@ -41,6 +43,8 @@ import com.qtekfun.ultimateotp.ui.components.PasswordField
 import com.qtekfun.ultimateotp.ui.components.StepHeader
 import com.qtekfun.ultimateotp.ui.components.rememberRetainedText
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -83,6 +87,7 @@ class LoginViewModel
     constructor(
         private val login: EmailLogin,
         private val controller: SyncController,
+        private val gate: AuthGate,
     ) : ViewModel() {
         private val _step = MutableStateFlow<LoginStep>(LoginStep.Email())
         val step: StateFlow<LoginStep> = _step.asStateFlow()
@@ -104,6 +109,11 @@ class LoginViewModel
                     onWrong?.invoke() ?: previous
                 } catch (_: IOException) {
                     LoginStep.Failed(unavailable = false)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // A bug or a full disk: the login step fails visibly, the app stays alive.
+                    LoginStep.Failed(unavailable = false, problem = AccountProblem.Unexpected)
                 }
         }
 
@@ -129,9 +139,18 @@ class LoginViewModel
             password: String,
             label: String,
         ) = go({
-            login.complete(step.ticket, password, label)
-            controller.refresh()
-            LoginStep.Done
+            // Preflighted inside: the Keystore is checked before the SRP session is used up, so
+            // declining the prompt puts the person back at the password with the code still valid.
+            when (gate.run { login.complete(step.ticket, password, label) }) {
+                is GateResult.Done -> {
+                    controller.refresh()
+                    LoginStep.Done
+                }
+
+                else -> {
+                    step
+                }
+            }
         }) { LoginStep.Email(wrongPassword = true) }
 
         fun restart() {

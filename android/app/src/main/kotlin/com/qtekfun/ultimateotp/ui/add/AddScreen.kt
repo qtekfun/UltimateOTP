@@ -23,6 +23,11 @@ import androidx.core.content.ContextCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.qtekfun.ultimateotp.R
+import com.qtekfun.ultimateotp.auth.AuthGate
+import com.qtekfun.ultimateotp.auth.GateResult
+import com.qtekfun.ultimateotp.core.otp.Base32
+import com.qtekfun.ultimateotp.core.otp.OtpAlgorithm
 import com.qtekfun.ultimateotp.core.otp.OtpParams
 import com.qtekfun.ultimateotp.core.otp.PlainListImport
 import com.qtekfun.ultimateotp.core.vault.ImportOutcome
@@ -61,6 +66,7 @@ class AddViewModel
         @ApplicationContext private val context: Context,
         private val vault: VaultRepository,
         private val transfer: VaultTransfer,
+        private val gate: AuthGate,
     ) : ViewModel() {
         private val _result = MutableStateFlow<AddResult?>(null)
         val result: StateFlow<AddResult?> = _result
@@ -80,15 +86,14 @@ class AddViewModel
                 return
             }
             viewModelScope.launch {
-                val summary = vault.import(parsed.accounts)
-                _result.value = AddResult.Added(summary.added, summary.duplicates)
+                val done = gate.attempt { vault.import(parsed.accounts) }
+                if (done is GateResult.Done) _result.value = AddResult.Added(done.value.added, done.value.duplicates)
             }
         }
 
         fun addManual(params: OtpParams) =
             viewModelScope.launch {
-                vault.add(params)
-                _result.value = AddResult.Added(1, 0)
+                if (gate.attempt { vault.add(params) } is GateResult.Done) _result.value = AddResult.Added(1, 0)
             }
 
         /** An UltimateOTP or Ente export, or an otpauth list, picked as a file. */

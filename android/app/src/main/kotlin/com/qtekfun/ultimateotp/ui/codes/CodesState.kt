@@ -52,9 +52,9 @@ data class CodesActions(
     val onSettings: () -> Unit = {},
     val onSync: () -> Unit = {},
     val onLock: () -> Unit = {},
-    /** Opens the trash list. STUB: the list comes with the trash feature (feat/features); does nothing until then. */
+    /** Opens the trash list. */
     val onTrash: () -> Unit = {},
-    /** Drag-and-drop reorder of [from] onto [to]. STUB: the manual order API comes with feat/features. */
+    /** Drag-and-drop (or accessibility action) reorder: [from] takes the position of [to]. */
     val onReorder: (from: UUID, to: UUID) -> Unit = { _, _ -> },
     val onReveal: (UUID) -> Unit = {},
 )

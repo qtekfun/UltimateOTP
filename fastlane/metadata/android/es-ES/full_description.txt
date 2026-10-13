@@ -1,0 +1,26 @@
+UltimateOTP es una aplicación de autenticación en dos pasos que genera códigos de un solo uso (TOTP, HOTP y Steam Guard) en tu teléfono. Funciona por completo sin conexión y por sí sola. Si quieres tus códigos en varios dispositivos, puede sincronizarlos con un servidor que alojas tú mismo; el servidor solo guarda datos cifrados.
+
+<b>Estado: desarrollo temprano, sin auditar</b>
+Esta aplicación todavía no ha sido revisada por un experto independiente en seguridad. No la uses como única copia de los secretos 2FA de cuentas que no puedas perder, y guarda una copia de seguridad. Consulta el SECURITY.md del proyecto para saber qué falta.
+
+<b>Códigos</b>
+• TOTP y HOTP con SHA-1, SHA-256 y SHA-512, y códigos de Steam Guard.
+• Añade cuentas escaneando un código QR, desde un enlace otpauth:// o a mano.
+• Búsqueda, etiquetas y favoritos.
+
+<b>Importar y exportar</b>
+• Importa desde Ente Auth (exportaciones en claro y cifradas), desde los códigos de migración de Google Authenticator y desde listas de enlaces otpauth://.
+• Exportación cifrada a un archivo .uotp protegido con una contraseña tuya (Argon2id y XChaCha20-Poly1305), o una lista en claro tras un aviso.
+
+<b>Protección en el teléfono</b>
+• Los secretos se cifran con una clave guardada en el Android Keystore; el bloqueo de la app usa tu biometría o el bloqueo de pantalla.
+• Se bloquean las capturas y la vista previa en aplicaciones recientes. Sin copias de seguridad en la nube.
+
+<b>Sincronización opcional con tu propio servidor</b>
+• Crea una cuenta con tu correo, una contraseña y una clave de recuperación de 24 palabras, o añade un dispositivo escaneando un QR desde otro que ya tengas.
+• Los cambios llegan a tus otros dispositivos al momento. Cualquier dispositivo puede revocar a otro.
+• El servidor nunca ve tus secretos, etiquetas ni contraseña. Tienes que ejecutar tú mismo el servidor de UltimateOTP (Docker, ver la documentación del proyecto); no hay un servicio alojado.
+
+<b>Privada por diseño</b>
+• Solo el permiso de cámara (para escanear QR) e internet (solo para llegar a tu propio servidor).
+• Sin anuncios, sin rastreo, sin analíticas, sin servicios de Google. Software libre (GPL-3.0-or-later).

@@ -1,0 +1,7 @@
+Subject: Your UltimateOTP login code
+
+Your UltimateOTP code is $code.
+
+It expires in $minutes minutes and works once.
+
+If you did not try to sign in, someone knows your email address. You can ignore this message: they still need your password.

@@ -1,0 +1,1 @@
+First release. Offline authenticator (TOTP, HOTP, Steam), QR scan, import from Ente Auth and Google Authenticator, encrypted export, app lock, and optional end-to-end encrypted sync with your own server. Early development, not audited.

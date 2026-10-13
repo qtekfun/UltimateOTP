@@ -174,3 +174,45 @@ def test_login_responses_validate(server: Server, lan: TestClient) -> None:
     check(login.json(), "SrpLoginResponse")
     check(owner.device.get("/otp/v1/sessions").json(), "SessionList")
     check(Device(lan).srp_login(EMAIL, "wrong").json(), "Problem")
+
+
+def test_history_and_account_responses_validate(
+    server: Server, lan: TestClient, bootstrapped: Bootstrapped
+) -> None:
+    a, vault = bootstrapped.device, bootstrapped.vault
+    one, two = new_item_id(), new_item_id()
+    a.commit(vault, {one: {"x": 1}, two: {"x": 2}})
+    a.commit(vault, {one: {"x": 3}}, deletes=[two])
+    check(a.get("/otp/v1/vault/history").json(), "VaultHistory")
+    check(a.get("/otp/v1/vault/history/1").json(), "HistoricVault")
+    check(a.get("/otp/v1/vault/history/2").json(), "HistoricVault")
+    check(a.get(f"/otp/v1/vault/history/1?item_id={one}").json(), "HistoricVault")
+    check(a.get("/otp/v1/vault/trash").json(), "VaultTrash")
+    check(a.get("/otp/v1/vault?since=0").json(), "VaultChanges")
+    check(lan.get("/otp/v1/server-info").json(), "ServerInfo")
+    check(a.get("/otp/v1/account/export").json(), "AccountExport")
+    check(a.post("/otp/v1/devices/revoke-others").json(), "RevokeOthersResult")
+    check(a.get("/otp/v1/vault/history/9").json(), "Problem")
+    check(a.get("/otp/v1/vault/history/0").json(), "Problem")
+    reauth, proof = a.reauth_srp("correct horse battery staple")
+    check(reauth.json(), "ReauthSrpSession")
+    deleted = a.post("/otp/v1/account/delete", {"reauth": {"srp": proof}})
+    check(deleted.json(), "AccountDeleted")
+
+
+def test_every_documented_error_code_of_1_2_0_exists() -> None:
+    codes = set(SPEC["components"]["schemas"]["Problem"]["properties"]["code"]["enum"])
+    assert {"client_blocked", "history_pruned", "srp_unavailable"} <= codes
+    paths = set(SPEC["paths"])
+    assert {
+        "/otp/v1/vault/history",
+        "/otp/v1/vault/history/{version}",
+        "/otp/v1/vault/trash",
+        "/otp/v1/account/delete",
+        "/otp/v1/account/email/change",
+        "/otp/v1/account/email/confirm",
+        "/otp/v1/account/reauth/email-code",
+        "/otp/v1/account/reauth/srp",
+        "/otp/v1/account/export",
+        "/otp/v1/devices/revoke-others",
+    } <= paths

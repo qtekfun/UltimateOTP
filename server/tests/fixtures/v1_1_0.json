@@ -1,0 +1,21 @@
+{
+  "account_id": "acc_oKte9aPGHpbng6ymgIA69w",
+  "deleted_item": "529532b4-913e-4c7d-a9eb-b650b5f7dd55",
+  "device_id": "dev_UKpHF1C8mPN7_DX3tCJbMg",
+  "ed25519_seed": "76ecddc71f7e95bb0d61df71099fb03ddc365f5af0378f29bd97e6f78c9ee2dd",
+  "email": "legacy@example.org",
+  "key_epoch": 1,
+  "live_items": {
+    "39bba380-d68d-4073-9db5-e9fcde656de0": {
+      "issuer": "v2"
+    },
+    "a3abd11f-dcdf-489e-b035-3533bf13a202": {
+      "issuer": "Keep"
+    }
+  },
+  "password": "legacy fixture password",
+  "revoked_device_id": "dev_erutBHAkp9DxYbO61c6G8Q",
+  "vault_key": "9fa6375ca1de2594ae80da2bee4868045b4a6ef8c6f617dbb87910617fc858fd",
+  "version": 3,
+  "x25519_seed": "b2ad8dce48f62af80ccc5bce0b42536fbc907b39d1b5923e5276151ab24095f9"
+}

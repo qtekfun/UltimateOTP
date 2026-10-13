@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 UltimateOTP contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<resources>
+    <string name="auth_notice_ok">Aceptar</string>
+    <string name="auth_cancelled">No confirmaste que eres tú, así que no se cambió nada. Inténtalo de nuevo cuando quieras.</string>
+    <string name="auth_key_lost">La clave del almacenamiento seguro de este teléfono se restableció, por ejemplo al quitar el bloqueo de pantalla. No se puede leer la clave guardada de la bóveda. Recupera tus cuentas iniciando sesión o importando un archivo de exportación.</string>
+    <string name="auth_failed">Algo salió mal y la acción no se completó. Tus cuentas no han cambiado.</string>
+    <string name="problem_unexpected">Algo salió mal en este teléfono. Inténtalo de nuevo.</string>
+</resources>

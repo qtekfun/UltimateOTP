@@ -45,6 +45,8 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.qtekfun.ultimateotp.R
+import com.qtekfun.ultimateotp.auth.AuthGate
+import com.qtekfun.ultimateotp.auth.GateResult
 import com.qtekfun.ultimateotp.core.sync.login.AccountProblem
 import com.qtekfun.ultimateotp.core.sync.login.EmailSignup
 import com.qtekfun.ultimateotp.sync.AccountRefresh
@@ -56,12 +58,13 @@ import com.qtekfun.ultimateotp.ui.components.PasswordField
 import com.qtekfun.ultimateotp.ui.components.RecoveryWordsGrid
 import com.qtekfun.ultimateotp.ui.components.StepHeader
 import com.qtekfun.ultimateotp.ui.components.StrengthMeter
-import com.qtekfun.ultimateotp.ui.components.WordsClipboardViewModel
 import com.qtekfun.ultimateotp.ui.components.rememberRetainedText
+import com.qtekfun.ultimateotp.ui.components.rememberWordsCopier
 import com.qtekfun.ultimateotp.ui.theme.CodeStyles
 import com.qtekfun.ultimateotp.ui.theme.Space
 import com.qtekfun.ultimateotp.util.PasswordStrength
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -107,6 +110,7 @@ class SignupViewModel
     constructor(
         private val signup: EmailSignup,
         private val refresh: AccountRefresh,
+        private val gate: AuthGate,
     ) : ViewModel() {
         private val _step = MutableStateFlow<SignupStep>(SignupStep.Email)
         val step: StateFlow<SignupStep> = _step.asStateFlow()
@@ -159,10 +163,20 @@ class SignupViewModel
 
         private fun create() =
             go {
-                signup.create(server, email, code, requireNotNull(draft), deviceLabel)
-                draft = null
-                refresh.accountChanged()
-                SignupStep.Done
+                val keys = requireNotNull(draft)
+                // The engine checks the Keystore before it sends /signup, so declining the prompt
+                // leaves no account behind: back to the words, with the draft kept.
+                when (gate.run { signup.create(server, email, code, keys, deviceLabel) }) {
+                    is GateResult.Done -> {
+                        draft = null
+                        refresh.accountChanged()
+                        SignupStep.Done
+                    }
+
+                    else -> {
+                        SignupStep.Recovery(keys.recoveryWords)
+                    }
+                }
             }
 
         fun retry() {
@@ -189,9 +203,14 @@ class SignupViewModel
                 _step.value =
                     try {
                         block()
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: IOException) {
                         // ApiException (a problem document) or no answer at all.
                         failed(AccountProblem.of(e) ?: AccountProblem.Network)
+                    } catch (_: Exception) {
+                        // A bug or a full disk: a failed step the person can retry, never a dead app.
+                        failed(AccountProblem.Unexpected)
                     }
             }
         }
@@ -229,7 +248,7 @@ fun SignupScreen(
     model: SignupViewModel = hiltViewModel(),
 ) {
     val step by model.step.collectAsState()
-    val words: WordsClipboardViewModel = hiltViewModel()
+    val words = rememberWordsCopier()
     LaunchedEffect(label) { model.deviceLabel = label }
     SignupContent(
         step = step,
@@ -243,7 +262,7 @@ fun SignupScreen(
         onRecoveryConfirmed = model::confirmRecoverySaved,
         onRetry = model::retry,
         onRestart = model::restart,
-        onCopyWords = words::copy,
+        onCopyWords = words,
     )
 }
 

@@ -9,6 +9,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -23,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -55,6 +57,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -63,6 +67,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,23 +78,30 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.qtekfun.ultimateotp.R
 import com.qtekfun.ultimateotp.core.sync.model.VaultItem
 import com.qtekfun.ultimateotp.ui.components.UotpLogo
 import com.qtekfun.ultimateotp.ui.components.WidthClass
 import com.qtekfun.ultimateotp.ui.theme.Space
 import com.qtekfun.ultimateotp.ui.theme.status
+import java.util.UUID
 
 private val ListMinCell = 340.dp
 private val GridMinCell = 168.dp
@@ -109,6 +121,7 @@ fun CodesContent(
     on: CodesActions,
     widthClass: WidthClass,
     modifier: Modifier = Modifier,
+    snackbar: SnackbarHostState = remember { SnackbarHostState() },
 ) {
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val gridState = rememberLazyGridState()
@@ -116,6 +129,7 @@ fun CodesContent(
     Scaffold(
         modifier = modifier.nestedScroll(scroll.nestedScrollConnection),
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             if (ui.searching) {
                 SearchTopBar(ui.query, on.onQuery) { on.onSearching(false) }
@@ -369,6 +383,9 @@ private fun CodesGrid(
     val filtering = ui.query.isNotBlank() || ui.tag != null
     val pinnedTitle = stringResource(R.string.section_pinned)
     val allTitle = stringResource(R.string.section_all)
+    // Manual order is edited on the full list only: with a filter the positions would be ambiguous.
+    val reorder = remember(state, on) { ReorderState(state, on.onReorder) }
+    val canReorder = !filtering && items.size > 1
     val pinned = if (filtering) emptyList() else filtered.filter { it.favorite }
     val rest = if (filtering) filtered else filtered.filterNot { it.favorite }
     LazyVerticalGrid(
@@ -393,10 +410,10 @@ private fun CodesGrid(
         }
         if (pinned.isNotEmpty()) {
             header("pinned", pinnedTitle)
-            cards(pinned, now, ui, on)
+            cards(pinned, now, ui, on, reorder.takeIf { canReorder })
             header("all", allTitle)
         }
-        cards(rest, now, ui, on)
+        cards(rest, now, ui, on, reorder.takeIf { canReorder })
     }
 }
 
@@ -419,8 +436,13 @@ private fun LazyGridScope.cards(
     now: Long,
     ui: CodesUi,
     on: CodesActions,
+    reorder: ReorderState?,
 ) {
     items(list, key = { it.id }) { item ->
+        val moveUp = stringResource(R.string.move_up)
+        val moveDown = stringResource(R.string.move_down)
+        val index = list.indexOfFirst { it.id == item.id }
+        val dragging = reorder?.draggedId == item.id
         CodeCard(
             item = item,
             now = now,
@@ -431,7 +453,91 @@ private fun LazyGridScope.cards(
             onCopy = { code -> if (ui.hideCodes && item.id != ui.revealedId) on.onReveal(item.id) else on.onCopy(item, code) },
             onMenu = { on.onMenu(item.id) },
             onNext = { on.onNext(item) },
+            dragHandle = if (reorder != null) Modifier.reorderHandle(reorder, item.id) else Modifier,
+            modifier =
+                Modifier
+                    .then(
+                        if (dragging) {
+                            Modifier.zIndex(1f).graphicsLayer {
+                                translationX = reorder.offset.x
+                                translationY = reorder.offset.y
+                            }
+                        } else {
+                            Modifier
+                        },
+                    ).then(
+                        if (reorder != null) {
+                            // TalkBack and keyboard users cannot drag: the same move as actions.
+                            Modifier.semantics {
+                                customActions =
+                                    listOfNotNull(
+                                        list.getOrNull(index - 1)?.let { prev ->
+                                            CustomAccessibilityAction(moveUp) {
+                                                on.onReorder(item.id, prev.id)
+                                                true
+                                            }
+                                        },
+                                        list.getOrNull(index + 1)?.let { next ->
+                                            CustomAccessibilityAction(moveDown) {
+                                                on.onReorder(item.id, next.id)
+                                                true
+                                            }
+                                        },
+                                    )
+                            }
+                        } else {
+                            Modifier
+                        },
+                    ),
         )
+    }
+}
+
+/**
+ * Drag and drop of the cards: the avatar is the handle. On release the card dropped over another
+ * card is reported as `onReorder(from, to)`; the manual order itself lives in the vault.
+ */
+@Stable
+internal class ReorderState(
+    private val grid: LazyGridState,
+    private val onReorder: (UUID, UUID) -> Unit,
+) {
+    var draggedId by mutableStateOf<UUID?>(null)
+        private set
+    var offset by mutableStateOf(Offset.Zero)
+        private set
+
+    fun start(id: UUID) {
+        draggedId = id
+        offset = Offset.Zero
+    }
+
+    fun dragBy(amount: Offset) {
+        offset += amount
+    }
+
+    fun cancel() = reset()
+
+    fun drop(id: UUID) {
+        val cards = grid.layoutInfo.visibleItemsInfo
+        val from = cards.firstOrNull { it.key == id }
+        if (from != null) {
+            val centre = Offset(from.offset.x + from.size.width / 2f, from.offset.y + from.size.height / 2f) + offset
+            val target =
+                cards.firstOrNull { c ->
+                    val key = c.key
+                    key is UUID && key != id &&
+                        centre.x >= c.offset.x && centre.x <= c.offset.x + c.size.width &&
+                        centre.y >= c.offset.y && centre.y <= c.offset.y + c.size.height
+                }
+            (target?.key as? UUID)?.let { onReorder(id, it) }
+        }
+        reset()
+    }
+
+    private fun reset() {
+        draggedId = null
+        offset = Offset.Zero
     }
 }
 
@@ -484,3 +590,20 @@ private fun FilterRow(
         }
     }
 }
+
+/** The drag handle of a card (its avatar): follows the finger, and on release reports the drop. */
+private fun Modifier.reorderHandle(
+    state: ReorderState,
+    id: UUID,
+): Modifier =
+    pointerInput(id) {
+        detectDragGestures(
+            onDragStart = { state.start(id) },
+            onDrag = { change, amount ->
+                change.consume()
+                state.dragBy(amount)
+            },
+            onDragEnd = { state.drop(id) },
+            onDragCancel = { state.cancel() },
+        )
+    }

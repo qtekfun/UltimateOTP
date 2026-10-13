@@ -69,8 +69,8 @@ import com.qtekfun.ultimateotp.ui.components.RecoveryWordsGrid
 import com.qtekfun.ultimateotp.ui.components.RowDivider
 import com.qtekfun.ultimateotp.ui.components.SettingsGroup
 import com.qtekfun.ultimateotp.ui.components.SettingsRow
-import com.qtekfun.ultimateotp.ui.components.WordsClipboardViewModel
 import com.qtekfun.ultimateotp.ui.components.rememberRetainedText
+import com.qtekfun.ultimateotp.ui.components.rememberWordsCopier
 import com.qtekfun.ultimateotp.ui.settings.PasswordDialog
 import com.qtekfun.ultimateotp.ui.theme.Space
 import com.qtekfun.ultimateotp.ui.theme.status
@@ -114,12 +114,12 @@ fun SyncScreen(
 ) {
     val status by model.status.collectAsState()
     val step by model.step.collectAsState()
-    val words: WordsClipboardViewModel = hiltViewModel()
+    val words = rememberWordsCopier()
     val label = remember { deviceLabel() }
     var enrollLink by remember { mutableStateOf<EnrollLink?>(null) }
     LaunchedEffect(initialLink) { if (initialLink.isNotBlank()) model.handleLink(initialLink, label) { enrollLink = it } }
     FlowScaffold(title = stringResource(R.string.sync_title), onBack = onBack) {
-        StepView(step, model, words::copy)
+        StepView(step, model, words)
         if (step is SyncStep.Idle || step is SyncStep.Done || step is SyncStep.Failed) {
             if (status.account == null) {
                 NoAccount(model, label, enrollLink, onLogin, onSignup) { enrollLink = it }
@@ -223,10 +223,12 @@ private fun failureText(reason: SyncStep.Reason): Int =
         SyncStep.Reason.NETWORK -> R.string.fail_network
         SyncStep.Reason.WRONG_SECRET -> R.string.fail_secret
         SyncStep.Reason.LAN_ONLY -> R.string.fail_lan
+        SyncStep.Reason.INSECURE_URL -> R.string.fail_insecure_url
         SyncStep.Reason.REJECTED_STATE -> R.string.fail_rejected
         SyncStep.Reason.REFUSED -> R.string.fail_refused
         SyncStep.Reason.SERVER -> R.string.fail_server
         SyncStep.Reason.LOGIN_UNAVAILABLE -> R.string.login_unavailable
+        SyncStep.Reason.UNEXPECTED -> R.string.problem_unexpected
     }
 
 private fun doneText(kind: SyncStep.DoneKind): Int =
