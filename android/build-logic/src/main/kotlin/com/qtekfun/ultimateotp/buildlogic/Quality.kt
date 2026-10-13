@@ -46,12 +46,13 @@ private val FORBIDDEN_GROUPS =
     )
 
 /** What ships and what runs in tests. A missing one fails the check instead of being skipped. */
-private val ANDROID_CLASSPATHS =
+private fun androidClasspaths(unitTestVariant: String) =
     listOf(
         "debugRuntimeClasspath",
         "releaseRuntimeClasspath",
-        "debugUnitTestRuntimeClasspath",
+        "${unitTestVariant}UnitTestRuntimeClasspath",
     )
+
 private val JVM_CLASSPATHS = listOf("runtimeClasspath", "testRuntimeClasspath")
 
 /** True if the module (group:name) belongs to a forbidden group or one of its subgroups. */
@@ -68,7 +69,11 @@ internal val Project.libs: VersionCatalog
  * check (all wired into `check`) and JUnit 5 (plus the vintage engine for Robolectric's JUnit 4
  * runner) for unit tests.
  */
-internal fun Project.configureQuality(android: Boolean) {
+internal fun Project.configureQuality(
+    android: Boolean,
+    /** The build type whose unit tests exist: AGP creates them for the module's `testBuildType` only. */
+    unitTestVariant: String = "debug",
+) {
     with(pluginManager) {
         apply("io.gitlab.arturbosch.detekt")
         apply("org.jlleitschuh.gradle.ktlint")
@@ -121,7 +126,7 @@ internal fun Project.configureQuality(android: Boolean) {
         add("testRuntimeOnly", libs.findLibrary("junit-platform-launcher").get())
     }
 
-    registerForbiddenDependencyCheck(if (android) ANDROID_CLASSPATHS else JVM_CLASSPATHS)
+    registerForbiddenDependencyCheck(if (android) androidClasspaths(unitTestVariant) else JVM_CLASSPATHS)
     configureCoverage()
 }
 
