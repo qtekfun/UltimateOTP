@@ -46,3 +46,31 @@ Guiding rule from the owner: when in doubt, behave like Ente Auth. These decisio
     - If SMTP is not configured, the server refuses to start unless `UOTP_EMAIL_VERIFICATION=disabled` is set explicitly (for local development).
     - Codes are stored hashed (SHA-256 with a per-code salt) and compared in constant time.
     - Per-email and per-IP send limits stop the server from being used to spam mailboxes.
+
+## Round 3 (2026-10-13): product, server and release decisions
+
+Answers of the owner to the product questionnaire. They set the backlog and the order of work.
+
+14. **Next features of the app:** Android Autofill (offer the OTP code in other apps' login forms), importers for Aegis, 2FAS, andOTP/Raivo and Bitwarden/Proton, a trash with 30 days of undo, and manual ordering. Not asked for now: a home-screen widget, a quick-settings tile, Wear OS.
+15. **Clients: Android only for now.** Desktop, CLI, web and iOS stay out of scope. The crypto and wire formats must keep them possible.
+16. **Codes are visible by default** once the app is unlocked, like Ente Auth. "Hide until tapped" is an optional setting, off by default.
+17. **Identity: green accent, name "UltimateOTP".**
+18. **Distribution: GitHub Releases and F-Droid.** Not Google Play, not IzzyOnDroid.
+19. **Server logging and abuse handling:**
+    - Client addresses are anonymised with a salted hash whose salt rotates daily: repeated attempts from one address are visible within a day, the address cannot be recovered or linked across days.
+    - Many failed attempts from one client lead to a temporary block with growing back-off (15 min, 1 h, 24 h), and a structured event that CrowdSec can parse.
+20. **Server features to add:** vault history (it enables the trash), emails in the language of the app (Spanish and English), and a Grafana dashboard with alert rules for the homelab's Prometheus. Sharing entries between accounts is not wanted.
+21. **Account management from the app:** delete the account, change the email, sign out of every other device, export everything.
+22. **Security work:** an external review before 1.0, and a configurable inactivity lock.
+23. **Diagnostics:** a local, exportable error log (no network, redacted).
+24. **Order of work:** design first (0.2.0), then the server work, the app features and the tests.
+
+### Decisions taken by the coordinator, pending the owner's confirmation
+
+These were judgement calls made while implementing; each can be reversed.
+
+- `last_ip` in the sessions list is an opaque per-day client id, not an address, and the 1.1.0 values are erased by migration `0002`. This follows "the address never reaches storage" and departs from decision 9's "last IP".
+- Tombstones are never compacted by default (`UOTP_TOMBSTONE_RETENTION_DAYS=0`): safe for the trash, the vault grows slowly.
+- Rotating the vault key clears the history and the trash (security over undo).
+- A phone that loses its Keystore key stays on the lock screen: there is no destructive "start over" action yet.
+- `UOTP_EMAIL_VERIFICATION` and `UOTP_SIGNUP` follow Ente's defaults: codes on, sign-up closed once the owner has an account.
