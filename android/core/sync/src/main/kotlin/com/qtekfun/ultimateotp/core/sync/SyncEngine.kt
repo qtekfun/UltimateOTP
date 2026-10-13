@@ -591,7 +591,7 @@ class SyncEngine(
             }
             val mine = if (local.localDeleted) null else local.localBlob?.let { cipher.open(id, it) }
             val theirs = cipher.committed(next)
-            val merged = Merge.resolve(mine, theirs)
+            val merged = Merge.resolve(mine, theirs, base = cipher.committed(local))
             upserts +=
                 if (merged.dirty && merged.item != null) {
                     next.copy(localBlob = cipher.seal(merged.item), localDeleted = false, dirty = true)
