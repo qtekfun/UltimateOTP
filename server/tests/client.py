@@ -272,8 +272,15 @@ class Device:
         *,
         tamper: bool = False,
         retry_stale: bool = False,
+        stale_first: bool = False,
     ) -> httpx.Response:
-        """The whole password login of the contract: attributes, session, verify."""
+        """The whole password login of the contract: attributes, session, verify.
+
+        `stale_first` sends the verify request with a clock an hour ahead and expects
+        `stale_request`; the request is then repeated with the right time, as the Android client
+        does (`UotpApi.call`, one retry on skew). `retry_stale` instead corrects the clock from the
+        `server_time` of a `stale_request` answer and resends the same body.
+        """
         group = srp.GROUP_4096
         attributes = self.http.post("/otp/v1/srp/attributes", json={"email": email}).json()
         kek = derive_kek(password, b64.decode(attributes["password_kdf"]))
@@ -304,6 +311,9 @@ class Device:
                 "app_version": "1.0.0-test",
             },
         }
+        if stale_first:
+            first = self.post("/otp/v1/srp/verify", payload, timestamp=int(time.time()) + 3600)
+            assert first.json()["code"] == "stale_request"
         response = self.post("/otp/v1/srp/verify", payload)
         if (
             retry_stale
