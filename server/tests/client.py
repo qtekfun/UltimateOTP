@@ -265,9 +265,20 @@ class Device:
         return response
 
     def srp_login(
-        self, email: str, password: str, code: str | None = None, *, tamper: bool = False
+        self,
+        email: str,
+        password: str,
+        code: str | None = None,
+        *,
+        tamper: bool = False,
+        stale_first: bool = False,
     ) -> httpx.Response:
-        """The whole password login of the contract: attributes, session, verify."""
+        """The whole password login of the contract: attributes, session, verify.
+
+        `stale_first` sends the verify request with a clock an hour ahead and, on
+        `stale_request`, repeats the same request with the right time, as the Android client does
+        (`UotpApi.call`, one retry on skew).
+        """
         group = srp.GROUP_4096
         attributes = self.http.post("/otp/v1/srp/attributes", json={"email": email}).json()
         kek = derive_kek(password, b64.decode(attributes["password_kdf"]))
@@ -288,19 +299,20 @@ class Device:
         )
         if tamper:
             m1 = bytes(32)
-        response = self.post(
-            "/otp/v1/srp/verify",
-            {
-                "session_id": session.json()["session_id"],
-                "srp_m1": b64.encode(m1),
-                "device": {
-                    "ed25519_public_key": self.ed25519,
-                    "x25519_public_key": self.x25519,
-                    "label": self.label,
-                    "app_version": "1.0.0-test",
-                },
+        verify = {
+            "session_id": session.json()["session_id"],
+            "srp_m1": b64.encode(m1),
+            "device": {
+                "ed25519_public_key": self.ed25519,
+                "x25519_public_key": self.x25519,
+                "label": self.label,
+                "app_version": "1.0.0-test",
             },
-        )
+        }
+        if stale_first:
+            first = self.post("/otp/v1/srp/verify", verify, timestamp=int(time.time()) + 3600)
+            assert first.json()["code"] == "stale_request"
+        response = self.post("/otp/v1/srp/verify", verify)
         if response.status_code == 201:
             data = response.json()
             big_a = srp.client_public(group, a)

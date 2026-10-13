@@ -30,6 +30,9 @@ class JvmLibraryConventionPlugin : Plugin<Project> {
                 }
             }
 
+            extensions.configure<KotlinJvmProjectExtension> {
+                sourceSets.getByName("test").kotlin.srcDir(testGuardDir())
+            }
             configureQuality(android = false)
         }
     }
