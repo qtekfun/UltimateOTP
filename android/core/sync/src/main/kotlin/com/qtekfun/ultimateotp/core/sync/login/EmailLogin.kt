@@ -9,11 +9,11 @@ package com.qtekfun.ultimateotp.core.sync.login
  * registering this device's keys. The HTTP shapes come from contracts/openapi.yaml.
  */
 interface EmailLogin {
-    /** Opaque progress of one login, returned by each step. */
+    /** Progress of one login, returned by each step. Kept in memory only. */
     class Ticket(
         val server: String,
         val email: String,
-        val state: Map<String, String> = emptyMap(),
+        val codeRequired: Boolean = true,
     )
 
     /** Asks the server to email a code. @return when a new code may be requested (Unix seconds). */
@@ -22,7 +22,7 @@ interface EmailLogin {
         email: String,
     ): Pair<Ticket, Long>
 
-    /** Checks the emailed code (10 minutes, at most 5 attempts on the server). */
+    /** Checks the emailed code (10 minutes, at most 5 attempts on the server); "" when none is required. */
     suspend fun verifyCode(
         ticket: Ticket,
         code: String,

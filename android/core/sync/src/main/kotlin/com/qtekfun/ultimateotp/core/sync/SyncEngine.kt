@@ -13,6 +13,7 @@ import com.qtekfun.ultimateotp.core.crypto.RecoveryKey
 import com.qtekfun.ultimateotp.core.crypto.Sas
 import com.qtekfun.ultimateotp.core.crypto.SealedVaultKey
 import com.qtekfun.ultimateotp.core.crypto.Sodium
+import com.qtekfun.ultimateotp.core.crypto.Srp
 import com.qtekfun.ultimateotp.core.crypto.Statements
 import com.qtekfun.ultimateotp.core.crypto.VaultKeyWraps
 import com.qtekfun.ultimateotp.core.crypto.wipe
@@ -24,9 +25,15 @@ import com.qtekfun.ultimateotp.core.sync.api.EnrollRequest
 import com.qtekfun.ultimateotp.core.sync.api.HeadInput
 import com.qtekfun.ultimateotp.core.sync.api.JoinRequest
 import com.qtekfun.ultimateotp.core.sync.api.KeyBundleDto
+import com.qtekfun.ultimateotp.core.sync.api.NewDevice
 import com.qtekfun.ultimateotp.core.sync.api.PairingDevice
 import com.qtekfun.ultimateotp.core.sync.api.RotateRequest
+import com.qtekfun.ultimateotp.core.sync.api.SessionInfo
 import com.qtekfun.ultimateotp.core.sync.api.Signer
+import com.qtekfun.ultimateotp.core.sync.api.SrpAttributes
+import com.qtekfun.ultimateotp.core.sync.api.SrpSessionRequest
+import com.qtekfun.ultimateotp.core.sync.api.SrpSetupDto
+import com.qtekfun.ultimateotp.core.sync.api.SrpVerifyRequest
 import com.qtekfun.ultimateotp.core.sync.api.UotpApi
 import com.qtekfun.ultimateotp.core.sync.api.Upsert
 import com.qtekfun.ultimateotp.core.sync.api.VaultHead
@@ -189,6 +196,95 @@ class SyncEngine(
             )
         store.installVaultKey(vk, wraps.keyEpoch, response.accountId, account)
         vk.wipe()
+    }
+
+    /** What `/srp/session` returned, plus our private ephemeral (memory only). */
+    class SrpHandshake(
+        val email: String,
+        val attributes: SrpAttributes,
+        val sessionId: String,
+        val serverB: ByteArray,
+        val privateA: ByteArray,
+    )
+
+    /** Login step 4 (contract 1.1.0): starts an SRP session; checks the emailed code if one is required. */
+    suspend fun startSrp(
+        serverUrl: String,
+        email: String,
+        attributes: SrpAttributes,
+        emailCode: String?,
+    ): SrpHandshake {
+        val privateA = Sodium.random(SRP_PRIVATE_BYTES)
+        val session = Srp.start(ByteArray(KEY_BYTES), attributes.srpUserId, B64u.decode(attributes.srpSalt), privateA = privateA)
+        val started = apiFor(serverUrl).srpSession(SrpSessionRequest(email, B64u.encode(session.publicA), emailCode?.ifBlank { null }))
+        return SrpHandshake(email, attributes, started.sessionId, B64u.decode(started.srpB), privateA)
+    }
+
+    /**
+     * Login step 5: proves the password, checks the server's proof, unwraps the vault key and
+     * registers this device. @throws CryptoException.AuthenticationFailed for a wrong password.
+     */
+    suspend fun completeSrp(
+        serverUrl: String,
+        handshake: SrpHandshake,
+        password: String,
+        label: String,
+    ) = mutex.withLock {
+        val api = apiFor(serverUrl)
+        val params = KdfParams.decode(B64u.decode(handshake.attributes.passwordKdf)).checkReaderLimits()
+        val kek = PasswordKdf.derive(password, params)
+        try {
+            val session =
+                Srp.start(
+                    kek,
+                    handshake.attributes.srpUserId,
+                    B64u.decode(handshake.attributes.srpSalt),
+                    privateA = handshake.privateA,
+                )
+            val m1 = session.proof(handshake.serverB)
+            val keys = DeviceKeys.generate()
+            val login =
+                try {
+                    api.srpVerify(
+                        Signer(keys, UotpApi.PENDING),
+                        SrpVerifyRequest(
+                            handshake.sessionId,
+                            B64u.encode(m1),
+                            NewDevice(keys.ed25519PublicB64u, keys.x25519PublicB64u, label, api.appVersion),
+                        ),
+                    )
+                } catch (e: ApiException) {
+                    if (e.code == "srp_failed") throw CryptoException.AuthenticationFailed("wrong password")
+                    throw e
+                }
+            if (!session.verifyServer(B64u.decode(login.srpM2))) reject("the server did not prove it knows the verifier")
+            val wrap = login.keys.passwordWrap ?: reject("no password wrap")
+            val vk = VaultKeyWraps.openWithKek(kek, wrap, params, login.keys.keyEpoch).vaultKey
+            store.saveDeviceKeys(keys)
+            val devices = api.devices(Signer(keys, login.device.deviceId)).devices
+            val account =
+                AccountState(
+                    serverUrl = serverUrl,
+                    accountId = login.accountId,
+                    deviceId = login.device.deviceId,
+                    label = label,
+                    keyEpoch = login.keys.keyEpoch,
+                    keysRevision = login.keys.keysRevision,
+                    // Trust on first use, flagged like password enrollment (crypto-format.md §5.2).
+                    pinned = devices.filter { it.revokedAt == null }.map { PinnedDevice(it.deviceId, it.ed25519, it.label) },
+                    clockOffset = api.clockOffset,
+                )
+            store.installVaultKey(vk, login.keys.keyEpoch, login.accountId, account)
+            vk.wipe()
+        } finally {
+            kek.wipe()
+        }
+    }
+
+    /** Session metadata for the "Active sessions" screen (decision 9). */
+    suspend fun sessions(): List<SessionInfo> {
+        val account = requireAccount()
+        return api(account).sessions(signer(account)).sessions
     }
 
     // ---- pairing ------------------------------------------------------------------------------
@@ -731,5 +827,7 @@ class SyncEngine(
         const val MAX_COMMIT_ATTEMPTS = 3
         const val POLL_MS = 2_000L
         const val VK_BYTES = 32
+        const val KEY_BYTES = 32
+        const val SRP_PRIVATE_BYTES = 64
     }
 }

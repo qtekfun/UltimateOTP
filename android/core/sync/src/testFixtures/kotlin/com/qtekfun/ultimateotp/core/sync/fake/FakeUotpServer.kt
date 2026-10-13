@@ -5,19 +5,23 @@ package com.qtekfun.ultimateotp.core.sync.fake
 
 import com.qtekfun.ultimateotp.core.crypto.B64u
 import com.qtekfun.ultimateotp.core.crypto.Ed25519
+import com.qtekfun.ultimateotp.core.crypto.SrpGroup
 import com.qtekfun.ultimateotp.core.crypto.Statements
+import com.qtekfun.ultimateotp.core.sync.api.Accepted
 import com.qtekfun.ultimateotp.core.sync.api.AccountKeys
 import com.qtekfun.ultimateotp.core.sync.api.ApproveRequest
 import com.qtekfun.ultimateotp.core.sync.api.Approver
 import com.qtekfun.ultimateotp.core.sync.api.CommitRequest
 import com.qtekfun.ultimateotp.core.sync.api.Device
 import com.qtekfun.ultimateotp.core.sync.api.DeviceList
+import com.qtekfun.ultimateotp.core.sync.api.EmailRequest
 import com.qtekfun.ultimateotp.core.sync.api.EnrollRequest
 import com.qtekfun.ultimateotp.core.sync.api.EnrollResponse
 import com.qtekfun.ultimateotp.core.sync.api.EnrollmentToken
 import com.qtekfun.ultimateotp.core.sync.api.Item
 import com.qtekfun.ultimateotp.core.sync.api.JoinRequest
 import com.qtekfun.ultimateotp.core.sync.api.JoinResponse
+import com.qtekfun.ultimateotp.core.sync.api.KeyAttributes
 import com.qtekfun.ultimateotp.core.sync.api.KeyBundleDto
 import com.qtekfun.ultimateotp.core.sync.api.Pairing
 import com.qtekfun.ultimateotp.core.sync.api.PairingCreated
@@ -28,6 +32,13 @@ import com.qtekfun.ultimateotp.core.sync.api.RecoveryKeys
 import com.qtekfun.ultimateotp.core.sync.api.RotateRequest
 import com.qtekfun.ultimateotp.core.sync.api.SealedVaultKeyDto
 import com.qtekfun.ultimateotp.core.sync.api.ServerInfo
+import com.qtekfun.ultimateotp.core.sync.api.SessionInfo
+import com.qtekfun.ultimateotp.core.sync.api.SessionList
+import com.qtekfun.ultimateotp.core.sync.api.SrpAttributes
+import com.qtekfun.ultimateotp.core.sync.api.SrpLoginResponse
+import com.qtekfun.ultimateotp.core.sync.api.SrpSession
+import com.qtekfun.ultimateotp.core.sync.api.SrpSessionRequest
+import com.qtekfun.ultimateotp.core.sync.api.SrpVerifyRequest
 import com.qtekfun.ultimateotp.core.sync.api.VaultChanges
 import com.qtekfun.ultimateotp.core.sync.api.VaultHead
 import kotlinx.serialization.KSerializer
@@ -36,6 +47,7 @@ import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import mockwebserver3.RecordedRequest
+import java.math.BigInteger
 import kotlin.math.abs
 
 /**
@@ -69,6 +81,14 @@ class FakeUotpServer : AutoCloseable {
     private val pairings = mutableMapOf<String, PairingState>()
     private val nonces = mutableSetOf<String>()
     private var rotationRequired = false
+
+    /** The account's address (contract 1.1.0: the account identifier). */
+    val email = "owner@example.com"
+
+    /** The last code "emailed" (tests read it from here). */
+    var lastEmailCode: String? = null
+        private set
+    private val srpSessions = mutableMapOf<String, Triple<BigInteger, BigInteger, BigInteger>>() // id -> (A, b, B)
 
     /** The vault: head and items. */
     data class State(
@@ -505,7 +525,67 @@ class FakeUotpServer : AutoCloseable {
         return ok(VaultHead.serializer(), state.head)
     }
 
+    // ---- SRP-6a server side (contract 1.1.0) -----------------------------------------------------
+
+    private val group = SrpGroup.RFC5054_4096
+
+    private fun srpAttributes(r: RecordedRequest): MockResponse {
+        val req = body(r, EmailRequest.serializer())
+        val srp = bundle?.srp
+        val attrs =
+            if (req.email == email && srp != null) {
+                SrpAttributes(srp.srpUserId, srp.srpSalt, bundle?.passwordKdf.orEmpty(), emailCodeRequired = true)
+            } else {
+                // Decoy for unknown addresses: deterministic per address in the real server.
+                SrpAttributes("00000000-0000-4000-8000-000000000000", B64u.encode(ByteArray(SALT)), bundle?.passwordKdf.orEmpty(), true)
+            }
+        return ok(SrpAttributes.serializer(), attrs)
+    }
+
+    private fun srpSession(r: RecordedRequest): MockResponse {
+        val req = body(r, SrpSessionRequest.serializer())
+        if (req.emailCode == null || req.emailCode != lastEmailCode) fail(UNAUTHORIZED, "invalid_email_code")
+        lastEmailCode = null
+        val srp = bundle?.srp ?: fail(UNAUTHORIZED, "srp_failed")
+        val v = BigInteger(1, B64u.decode(srp.srpVerifier))
+        val b = BigInteger(1, ByteArray(EPHEMERAL).also { java.security.SecureRandom().nextBytes(it) })
+        val bigB =
+            group.k
+                .multiply(v)
+                .add(group.g.modPow(b, group.n))
+                .mod(group.n)
+        val id = "srp_" + "x${++counter}".padEnd(ID_CHARS, 'z')
+        srpSessions[id] = Triple(BigInteger(1, B64u.decode(req.srpA)), b, bigB)
+        return ok(SrpSession.serializer(), SrpSession(id, B64u.encode(group.pad(bigB))))
+    }
+
+    private fun srpVerify(r: RecordedRequest): MockResponse {
+        val req = body(r, SrpVerifyRequest.serializer())
+        checkSignature(r, req.device.ed25519)
+        val (bigA, b, bigB) = srpSessions.remove(req.sessionId) ?: fail(UNAUTHORIZED, "srp_failed")
+        val srp = bundle?.srp ?: fail(UNAUTHORIZED, "srp_failed")
+        val v = BigInteger(1, B64u.decode(srp.srpVerifier))
+        val u = group.hInt(group.pad(bigA), group.pad(bigB))
+        val key = group.h(group.pad(bigA.multiply(v.modPow(u, group.n)).mod(group.n).modPow(b, group.n)))
+        val hn = group.h(group.pad(group.n))
+        val hg = group.h(group.pad(group.g))
+        val xor = ByteArray(hn.size) { (hn[it].toInt() xor hg[it].toInt()).toByte() }
+        val identity = srp.srpUserId.toByteArray()
+        val m1 = group.h(xor, group.h(identity), B64u.decode(srp.srpSalt), group.pad(bigA), group.pad(bigB), key)
+        if (!m1.contentEquals(B64u.decode(req.srpM1))) fail(UNAUTHORIZED, "srp_failed")
+        val m2 = group.h(group.pad(bigA), m1, key)
+        val d = Device(nextId("dev_"), req.device.label, req.device.ed25519, req.device.x25519, "password", null, null, now, null, null)
+        devices[d.deviceId] = d
+        devicesRevision++
+        val bnd = bundle!!
+        val keys = KeyAttributes(keyEpoch, keysRevision, bnd.passwordWrap, bnd.passwordKdf, bnd.recoveryWrap)
+        return ok(SrpLoginResponse.serializer(), SrpLoginResponse(B64u.encode(m2), accountId, d, state.head, keys), CREATED)
+    }
+
     private companion object {
+        const val SALT = 16
+        const val EPHEMERAL = 32
+        const val ACCEPTED = 202
         const val MILLIS = 1000L
         const val ID_CHARS = 22
         const val TOKEN_CHARS = 43

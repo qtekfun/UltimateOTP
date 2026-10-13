@@ -52,7 +52,10 @@ import javax.inject.Inject
 
 /** The login steps of decision 13: email, emailed code, password. */
 sealed interface LoginStep {
-    data object Email : LoginStep
+    /** [wrongPassword]: the previous attempt failed; the emailed code works once, so start again. */
+    data class Email(
+        val wrongPassword: Boolean = false,
+    ) : LoginStep
 
     data class Code(
         val ticket: EmailLogin.Ticket,
@@ -81,7 +84,7 @@ class LoginViewModel
         private val login: EmailLogin,
         private val controller: SyncController,
     ) : ViewModel() {
-        private val _step = MutableStateFlow<LoginStep>(LoginStep.Email)
+        private val _step = MutableStateFlow<LoginStep>(LoginStep.Email())
         val step: StateFlow<LoginStep> = _step.asStateFlow()
 
         private fun go(
@@ -129,10 +132,10 @@ class LoginViewModel
             login.complete(step.ticket, password, label)
             controller.refresh()
             LoginStep.Done
-        }) { step.copy(wrongPassword = true) }
+        }) { LoginStep.Email(wrongPassword = true) }
 
         fun restart() {
-            _step.value = LoginStep.Email
+            _step.value = LoginStep.Email()
         }
 
         private companion object {
@@ -166,7 +169,8 @@ fun LoginScreen(
     ) { padding ->
         Column(Modifier.padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             when (val s = step) {
-                LoginStep.Email -> {
+                is LoginStep.Email -> {
+                    if (s.wrongPassword) Text(stringResource(R.string.wrong_password_again), color = MaterialTheme.colorScheme.error)
                     EmailStep(defaultServer, model::sendCode)
                 }
 

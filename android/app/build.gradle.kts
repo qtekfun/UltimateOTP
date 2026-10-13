@@ -41,6 +41,10 @@ android {
         }
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     packaging {
         // The JNA AAR and the libsodium AAR both carry native libraries; keep them uncompressed
         // and page-aligned (16 KB devices).

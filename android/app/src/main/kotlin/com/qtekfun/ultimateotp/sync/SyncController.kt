@@ -8,6 +8,7 @@ import android.content.Context
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
+import com.qtekfun.ultimateotp.BuildConfig
 import com.qtekfun.ultimateotp.core.crypto.PasswordKdf
 import com.qtekfun.ultimateotp.core.sync.AccountState
 import com.qtekfun.ultimateotp.core.sync.EventStream
@@ -57,7 +58,10 @@ class SyncController
         val http: OkHttpClient = OkHttpClient.Builder().callTimeout(CALL_TIMEOUT_S, TimeUnit.SECONDS).build()
         private val apis = mutableMapOf<String, UotpApi>()
 
-        fun api(url: String): UotpApi = synchronized(apis) { apis.getOrPut(url) { UotpApi(url, http) } }
+        fun api(url: String): UotpApi =
+            synchronized(apis) {
+                apis.getOrPut(url) { UotpApi(url, http, appVersion = "UltimateOTP-Android/${BuildConfig.VERSION_NAME}") }
+            }
 
         val engine = SyncEngine(vault, ::api, kdfLadder = ::ladder)
         private val _status = MutableStateFlow(SyncStatus())

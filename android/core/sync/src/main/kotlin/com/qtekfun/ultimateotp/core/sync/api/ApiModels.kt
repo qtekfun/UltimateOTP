@@ -15,10 +15,18 @@ data class ServerInfo(
 )
 
 @Serializable
+data class SrpSetupDto(
+    @SerialName("srp_user_id") val srpUserId: String,
+    @SerialName("srp_salt") val srpSalt: String,
+    @SerialName("srp_verifier") val srpVerifier: String,
+)
+
+@Serializable
 data class KeyBundleDto(
     @SerialName("password_wrap") val passwordWrap: String? = null,
     @SerialName("password_kdf") val passwordKdf: String? = null,
     @SerialName("recovery_wrap") val recoveryWrap: String,
+    val srp: SrpSetupDto? = null,
 )
 
 @Serializable
@@ -27,6 +35,8 @@ data class EnrollRequest(
     @SerialName("x25519_public_key") val x25519: String,
     val label: String,
     val keys: KeyBundleDto? = null,
+    @SerialName("app_version") val appVersion: String? = null,
+    @SerialName("email_code") val emailCode: String? = null,
 )
 
 @Serializable
@@ -245,4 +255,88 @@ data class Problem(
     @SerialName("server_time") val serverTime: Long? = null,
     val head: VaultHead? = null,
     @SerialName("retry_after") val retryAfter: Long? = null,
+)
+
+// ---- contract 1.1.0: password login (SRP-6a + emailed code), sessions ---------------------------
+
+@Serializable
+data class EmailRequest(
+    val email: String,
+)
+
+@Serializable
+data class Accepted(
+    val status: String = "accepted",
+)
+
+@Serializable
+data class SrpAttributes(
+    @SerialName("srp_user_id") val srpUserId: String,
+    @SerialName("srp_salt") val srpSalt: String,
+    @SerialName("password_kdf") val passwordKdf: String,
+    @SerialName("email_code_required") val emailCodeRequired: Boolean,
+)
+
+@Serializable
+data class SrpSessionRequest(
+    val email: String,
+    @SerialName("srp_a") val srpA: String,
+    @SerialName("email_code") val emailCode: String? = null,
+)
+
+@Serializable
+data class SrpSession(
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("srp_b") val srpB: String,
+)
+
+@Serializable
+data class NewDevice(
+    @SerialName("ed25519_public_key") val ed25519: String,
+    @SerialName("x25519_public_key") val x25519: String,
+    val label: String,
+    @SerialName("app_version") val appVersion: String? = null,
+)
+
+@Serializable
+data class SrpVerifyRequest(
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("srp_m1") val srpM1: String,
+    val device: NewDevice,
+)
+
+@Serializable
+data class KeyAttributes(
+    @SerialName("key_epoch") val keyEpoch: Long,
+    @SerialName("keys_revision") val keysRevision: Long,
+    @SerialName("password_wrap") val passwordWrap: String? = null,
+    @SerialName("password_kdf") val passwordKdf: String? = null,
+    @SerialName("recovery_wrap") val recoveryWrap: String,
+)
+
+@Serializable
+data class SrpLoginResponse(
+    @SerialName("srp_m2") val srpM2: String,
+    @SerialName("account_id") val accountId: String,
+    val device: Device,
+    val head: VaultHead,
+    val keys: KeyAttributes,
+)
+
+@Serializable
+data class SessionInfo(
+    @SerialName("device_id") val deviceId: String,
+    val label: String,
+    @SerialName("app_version") val appVersion: String? = null,
+    @SerialName("enrolled_via") val enrolledVia: String,
+    @SerialName("created_at") val createdAt: Long,
+    @SerialName("last_seen_at") val lastSeenAt: Long? = null,
+    @SerialName("last_ip") val lastIp: String? = null,
+    @SerialName("revoked_at") val revokedAt: Long? = null,
+    val current: Boolean = false,
+)
+
+@Serializable
+data class SessionList(
+    val sessions: List<SessionInfo>,
 )
