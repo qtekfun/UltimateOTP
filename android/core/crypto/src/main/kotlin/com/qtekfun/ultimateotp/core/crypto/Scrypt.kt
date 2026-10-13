@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: 2026 UltimateOTP contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+// The word indexes of the Salsa20/8 core are the algorithm (RFC 7914 section 8), not tunables.
+@file:Suppress("MagicNumber")
+
 package com.qtekfun.ultimateotp.core.crypto
 
 /**

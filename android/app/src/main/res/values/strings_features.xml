@@ -38,8 +38,6 @@
     <string name="trash_server_title">Removed for good, still on the server</string>
     <string name="trash_server_load">Look in the server history</string>
     <string name="trash_server_none">Nothing recoverable on the server.</string>
-    <string name="undo">Undo</string>
-    <string name="entry_deleted">Moved to the trash</string>
 
     <!-- Account -->
     <string name="account_settings">Account</string>
@@ -58,7 +56,7 @@
     <string name="account_continue">Continue</string>
     <string name="account_done_deleted">Account deleted.</string>
     <string name="account_done_email">Email changed to %1$s.</string>
-    <string name="account_done_others">Signed out %1$d device(s). Vault key changed: %2$s.</string>
+    <string name="account_done_others">Other devices signed out: %1$d. Vault key changed: %2$s.</string>
     <string name="account_done_export">Export ready.</string>
     <string name="account_problem">Could not do that (%1$s). Nothing was changed.</string>
     <string name="account_no_account">This phone is not signed in to an account.</string>

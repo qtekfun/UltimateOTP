@@ -69,7 +69,6 @@ class AccountViewModel
         private val actions = AccountActions(management)
         val state: StateFlow<AccountActionState> = actions.state
         val signedIn = MutableStateFlow(false)
-        private var exported: String? = null
 
         init {
             viewModelScope.launch { signedIn.value = vault.account() != null }
@@ -202,16 +201,7 @@ private fun ConfirmStep(
     if (action == AccountAction.CHANGE_EMAIL) {
         OutlinedTextField(newEmail, { newEmail = it }, label = { Text(stringResource(R.string.account_new_email)) })
     }
-    if (action != AccountAction.EXPORT) {
-        if (codeSent) {
-            OutlinedTextField(secret, { secret = it }, label = { Text(stringResource(R.string.account_email_code)) })
-        } else {
-            PasswordField(secret, { secret = it }, stringResource(R.string.account_password))
-            if (action == AccountAction.DELETE_ACCOUNT || action == AccountAction.CHANGE_EMAIL) {
-                TextButton(onClick = model::sendCode) { Text(stringResource(R.string.account_send_code)) }
-            }
-        }
-    }
+    if (action != AccountAction.EXPORT) ProofInput(action, secret, { secret = it }, codeSent, model)
     problem?.let { Text(stringResource(R.string.account_problem, problemName(it))) }
     Button(
         onClick = {
@@ -226,6 +216,24 @@ private fun ConfirmStep(
         modifier = Modifier.fillMaxWidth(),
     ) { Text(stringResource(R.string.account_continue)) }
     TextButton(onClick = model::cancel) { Text(stringResource(R.string.cancel)) }
+}
+
+@Composable
+private fun ProofInput(
+    action: AccountAction,
+    secret: String,
+    onSecret: (String) -> Unit,
+    codeSent: Boolean,
+    model: AccountViewModel,
+) {
+    if (codeSent) {
+        OutlinedTextField(secret, onSecret, label = { Text(stringResource(R.string.account_email_code)) })
+        return
+    }
+    PasswordField(secret, onSecret, stringResource(R.string.account_password))
+    if (action == AccountAction.DELETE_ACCOUNT || action == AccountAction.CHANGE_EMAIL) {
+        TextButton(onClick = model::sendCode) { Text(stringResource(R.string.account_send_code)) }
+    }
 }
 
 @Composable
