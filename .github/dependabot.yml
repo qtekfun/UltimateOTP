@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: 2026 UltimateOTP contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Dependency updates. A bump of a Gradle dependency or plugin changes
+# android/gradle/verification-metadata.xml: see docs/reproducible-builds.md ("Updating the
+# verification metadata"). Dependabot does not edit that file, so its Gradle PRs need one extra
+# commit from the maintainer. Updates to the security-relevant native libraries (libsodium
+# bindings, JNA) deserve a read of the release notes before merging.
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /android
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      # Kotlin, KSP and the Compose compiler plugin move together.
+      kotlin:
+        patterns: ["org.jetbrains.kotlin*", "com.google.devtools.ksp*"]
+      androidx:
+        patterns: ["androidx.*"]
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: uv
+    directory: /server
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(deps)"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: /server
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(deps)"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci(deps)"
