@@ -17,6 +17,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.qtekfun.ultimateotp.core.vault.VaultRepository
 import com.qtekfun.ultimateotp.core.vault.VaultState
+import com.qtekfun.ultimateotp.features.AccountScreen
+import com.qtekfun.ultimateotp.features.AutofillAssociationsScreen
+import com.qtekfun.ultimateotp.features.TrashScreen
 import com.qtekfun.ultimateotp.ui.add.AddScreen
 import com.qtekfun.ultimateotp.ui.codes.CodesScreen
 import com.qtekfun.ultimateotp.ui.edit.EditScreen
@@ -139,7 +142,18 @@ private fun Unlocked(
             )
         }
         composable("edit/{id}") { EditScreen(id = it.arguments?.getString("id").orEmpty(), onDone = { nav.popBackStack() }) }
-        composable("settings") { SettingsScreen(onBack = { nav.popBackStack() }, onSync = { nav.navigate("sync?link=") }) }
+        composable("settings") {
+            SettingsScreen(
+                onBack = { nav.popBackStack() },
+                onSync = { nav.navigate("sync?link=") },
+                onTrash = { nav.navigate("trash") },
+                onAccount = { nav.navigate("account") },
+                onAutofillAssociations = { nav.navigate("autofill-associations") },
+            )
+        }
+        composable("trash") { TrashScreen(onBack = { nav.popBackStack() }) }
+        composable("account") { AccountScreen(onBack = { nav.popBackStack() }) }
+        composable("autofill-associations") { AutofillAssociationsScreen(onBack = { nav.popBackStack() }) }
         composable(
             "sync?link={link}",
             arguments =

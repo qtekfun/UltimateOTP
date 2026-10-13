@@ -45,6 +45,7 @@ import com.qtekfun.ultimateotp.R
 import com.qtekfun.ultimateotp.core.crypto.PasswordKdf
 import com.qtekfun.ultimateotp.core.vault.ImportOutcome
 import com.qtekfun.ultimateotp.core.vault.VaultTransfer
+import com.qtekfun.ultimateotp.features.FeatureSettingsSection
 import com.qtekfun.ultimateotp.ui.components.PasswordField
 import com.qtekfun.ultimateotp.util.AppSettings
 import com.qtekfun.ultimateotp.util.Settings
@@ -76,6 +77,11 @@ sealed interface TransferStatus {
     data object WrongPassword : TransferStatus
 
     data object Failed : TransferStatus
+
+    /** A file of an unsupported variant, with the reason in one fixed line (no file content). */
+    data class Unreadable(
+        val reason: String,
+    ) : TransferStatus
 }
 
 @HiltViewModel
@@ -141,6 +147,10 @@ class SettingsViewModel
                         TransferStatus.WrongPassword
                     }
 
+                    is ImportOutcome.Unreadable -> {
+                        TransferStatus.Unreadable(outcome.reason)
+                    }
+
                     else -> {
                         TransferStatus.Failed
                     }
@@ -164,6 +174,9 @@ class SettingsViewModel
 fun SettingsScreen(
     onBack: () -> Unit,
     onSync: () -> Unit,
+    onTrash: () -> Unit = {},
+    onAccount: () -> Unit = {},
+    onAutofillAssociations: () -> Unit = {},
     model: SettingsViewModel = hiltViewModel(),
 ) {
     val settings by model.settings.collectAsState()
@@ -202,10 +215,8 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(stringResource(R.string.section_security), style = MaterialTheme.typography.titleMedium)
-            Text(stringResource(R.string.lock_timeout, settings.lockTimeoutSeconds))
-            LOCK_CHOICES.forEach { s ->
-                TextButton(onClick = { model.setLockTimeout(s) }) { Text(stringResource(R.string.lock_after, s)) }
-            }
+            // Lock timeout, autofill, trash, account and error log: features/FeatureSettings.kt.
+            FeatureSettingsSection(onTrash, onAccount, onAutofillAssociations)
             HorizontalDivider()
             Text(stringResource(R.string.section_backup), style = MaterialTheme.typography.titleMedium)
             Button(
@@ -270,6 +281,7 @@ private fun statusText(status: TransferStatus): String =
         TransferStatus.NeedsPassword -> stringResource(R.string.import_password_title)
         TransferStatus.WrongPassword -> stringResource(R.string.wrong_password)
         TransferStatus.Failed -> stringResource(R.string.transfer_failed)
+        is TransferStatus.Unreadable -> status.reason
     }
 
 /** Asks for a password; with [confirm] it must be typed twice and be at least 8 characters. */
@@ -300,4 +312,3 @@ fun PasswordDialog(
 }
 
 private const val MIN_PASSWORD = 8
-private val LOCK_CHOICES = listOf(0, 30, 60, 300)

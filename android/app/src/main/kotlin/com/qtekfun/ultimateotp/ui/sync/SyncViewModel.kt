@@ -5,8 +5,8 @@ package com.qtekfun.ultimateotp.ui.sync
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.qtekfun.ultimateotp.core.crypto.CryptoException
 import com.qtekfun.ultimateotp.BuildConfig
+import com.qtekfun.ultimateotp.core.crypto.CryptoException
 import com.qtekfun.ultimateotp.core.sync.DeviceView
 import com.qtekfun.ultimateotp.core.sync.EnrollLink
 import com.qtekfun.ultimateotp.core.sync.EnrollmentPolicy

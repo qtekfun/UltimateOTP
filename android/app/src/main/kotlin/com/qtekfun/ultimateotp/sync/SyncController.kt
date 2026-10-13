@@ -10,6 +10,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.qtekfun.ultimateotp.BuildConfig
 import com.qtekfun.ultimateotp.core.crypto.PasswordKdf
+import com.qtekfun.ultimateotp.core.support.diag.DiagnosticsLog
 import com.qtekfun.ultimateotp.core.sync.AccountState
 import com.qtekfun.ultimateotp.core.sync.EventStream
 import com.qtekfun.ultimateotp.core.sync.SyncEngine
@@ -54,6 +55,7 @@ class SyncController
         @ApplicationContext private val context: Context,
         private val vault: VaultRepository,
         @AppScope private val scope: CoroutineScope,
+        private val diagnostics: DiagnosticsLog,
     ) : DefaultLifecycleObserver {
         val http: OkHttpClient = OkHttpClient.Builder().callTimeout(CALL_TIMEOUT_S, TimeUnit.SECONDS).build()
         private val apis = mutableMapOf<String, UotpApi>()
@@ -73,7 +75,14 @@ class SyncController
                 http,
                 api = { runBlocking { vault.account() }?.let { api(it.serverUrl) } },
                 signer = { runCatching { runBlocking { vault.account() }?.let { Signer(vault.deviceKeys(), it.deviceId) } }.getOrNull() },
-                onEvent = { event -> if (event.type in SYNC_EVENTS) syncNow() },
+                onEvent = { event ->
+                    when {
+                        event.type in SYNC_EVENTS -> syncNow()
+
+                        // The account was deleted from another device: keep the entries, forget the account.
+                        event.type == "account_deleted" -> forgetAccount()
+                    }
+                },
             )
 
         /** Argon2id starts at the rung that fits in free memory (crypto-format.md §4.1). */
@@ -86,7 +95,13 @@ class SyncController
         @OptIn(FlowPreview::class)
         fun start() {
             ProcessLifecycleOwner.get().lifecycle.addObserver(this)
-            scope.launch { vault.state.collect { refresh() } }
+            scope.launch {
+                vault.state.collect {
+                    // The trash empties itself after 30 days.
+                    if (it == VaultState.UNLOCKED) runCatching { vault.purgeExpired() }
+                    refresh()
+                }
+            }
             scope.launch { vault.items.debounce(EDIT_DEBOUNCE_MS).collect { if (hasAccount()) syncNow() } }
         }
 
@@ -114,6 +129,13 @@ class SyncController
             }
         }
 
+        private suspend fun forgetAccount() {
+            diagnostics.event("sync", "account deleted elsewhere")
+            runCatching { vault.leaveAccount() }
+            events.stop()
+            refresh()
+        }
+
         fun syncNow() {
             scope.launch {
                 if (!hasAccount() || _status.value.running) return@launch
@@ -125,10 +147,19 @@ class SyncController
                         _status.value = _status.value.copy(offline = true)
                         null
                     }
+                diagnostics.event("sync", describe(result))
                 _status.value = _status.value.copy(running = false, last = result ?: _status.value.last, account = vault.account())
                 if (result == SyncResult.Revoked) events.stop()
             }
         }
+
+        private fun describe(result: SyncResult?): String =
+            when (result) {
+                null -> "offline"
+                is SyncResult.Synced -> "synced v${result.version}, ${result.committed} sent, ${result.conflicts} conflicts"
+                SyncResult.Revoked -> "device revoked"
+                else -> result.javaClass.simpleName
+            }
 
         private companion object {
             const val CALL_TIMEOUT_S = 30L
