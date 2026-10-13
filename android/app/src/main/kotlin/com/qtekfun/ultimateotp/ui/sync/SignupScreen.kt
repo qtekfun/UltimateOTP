@@ -39,7 +39,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -48,6 +47,8 @@ import com.qtekfun.ultimateotp.R
 import com.qtekfun.ultimateotp.core.sync.login.AccountProblem
 import com.qtekfun.ultimateotp.core.sync.login.EmailSignup
 import com.qtekfun.ultimateotp.sync.AccountRefresh
+import com.qtekfun.ultimateotp.ui.components.CopyWordsButton
+import com.qtekfun.ultimateotp.ui.components.PasswordField
 import com.qtekfun.ultimateotp.util.PasswordStrength
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
@@ -313,12 +314,10 @@ private fun SignupPassword(onPassword: (String) -> Unit) {
     var repeat by remember { mutableStateOf("") }
     val strength = PasswordStrength.of(password)
     Text(stringResource(R.string.signup_password_warning))
-    OutlinedTextField(
-        password,
-        { password = it },
-        label = { Text(stringResource(R.string.password)) },
-        visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+    PasswordField(
+        value = password,
+        onValueChange = { password = it },
+        label = stringResource(R.string.password),
         modifier = Modifier.fillMaxWidth(),
     )
     if (password.isNotEmpty()) {
@@ -327,13 +326,11 @@ private fun SignupPassword(onPassword: (String) -> Unit) {
             color = if (strength.acceptable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
         )
     }
-    OutlinedTextField(
-        repeat,
-        { repeat = it },
-        label = { Text(stringResource(R.string.password_repeat)) },
+    PasswordField(
+        value = repeat,
+        onValueChange = { repeat = it },
+        label = stringResource(R.string.password_repeat),
         isError = repeat.isNotEmpty() && repeat != password,
-        visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         modifier = Modifier.fillMaxWidth(),
     )
     if (repeat.isNotEmpty() && repeat != password) Text(stringResource(R.string.password_mismatch), color = MaterialTheme.colorScheme.error)
@@ -368,6 +365,7 @@ private fun SignupRecovery(
                 },
                 fontFamily = FontFamily.Monospace,
             )
+            CopyWordsButton(words)
         }
     }
     Row(verticalAlignment = Alignment.CenterVertically) {

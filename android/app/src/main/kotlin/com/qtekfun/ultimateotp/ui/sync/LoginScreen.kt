@@ -31,7 +31,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -42,6 +41,7 @@ import com.qtekfun.ultimateotp.core.sync.api.ApiException
 import com.qtekfun.ultimateotp.core.sync.login.AccountProblem
 import com.qtekfun.ultimateotp.core.sync.login.EmailLogin
 import com.qtekfun.ultimateotp.sync.SyncController
+import com.qtekfun.ultimateotp.ui.components.PasswordField
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -273,12 +273,11 @@ private fun PasswordStep(
     onPassword: (String) -> Unit,
 ) {
     var password by remember { mutableStateOf("") }
-    OutlinedTextField(
-        password,
-        { password = it },
-        label = { Text(stringResource(R.string.password)) },
+    PasswordField(
+        value = password,
+        onValueChange = { password = it },
+        label = stringResource(R.string.password),
         isError = step.wrongPassword,
-        visualTransformation = PasswordVisualTransformation(),
         modifier = Modifier.fillMaxWidth(),
     )
     if (step.wrongPassword) Text(stringResource(R.string.wrong_password), color = MaterialTheme.colorScheme.error)
