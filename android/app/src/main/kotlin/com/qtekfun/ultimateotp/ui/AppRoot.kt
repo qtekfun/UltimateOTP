@@ -24,13 +24,18 @@ import com.qtekfun.ultimateotp.ui.lock.LockScreen
 import com.qtekfun.ultimateotp.ui.lock.WelcomeScreen
 import com.qtekfun.ultimateotp.ui.settings.SettingsScreen
 import com.qtekfun.ultimateotp.ui.sync.LoginScreen
+import com.qtekfun.ultimateotp.ui.sync.SignupScreen
 import com.qtekfun.ultimateotp.ui.sync.SyncScreen
 import com.qtekfun.ultimateotp.ui.sync.deviceLabel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+/** The first-run choice (like Ente Auth's): where to go once the local vault exists. */
+enum class FirstRun { SIGN_UP, LOG_IN, OFFLINE, ADVANCED }
 
 /** Shows the lock or welcome screen until the vault is unlocked, then the app's screens. */
 @HiltViewModel
@@ -40,8 +45,22 @@ class RootViewModel
         val vault: VaultRepository,
     ) : ViewModel() {
         val state: StateFlow<VaultState> = vault.state
+        private val _firstRun = MutableStateFlow<FirstRun?>(null)
+        val firstRun: StateFlow<FirstRun?> = _firstRun.asStateFlow()
 
-        fun create() = viewModelScope.launch { vault.create() }
+        /**
+         * Every path starts with the local vault (its key becomes the account's vault key on
+         * sign-up or bootstrap, or receives the account's on login); then [choice] opens its screen.
+         */
+        fun create(choice: FirstRun) =
+            viewModelScope.launch {
+                _firstRun.value = choice
+                vault.create()
+            }
+
+        fun firstRunShown() {
+            _firstRun.value = null
+        }
     }
 
 typealias Authenticate = (onSuccess: () -> Unit, onError: (String) -> Unit) -> Unit
@@ -54,16 +73,39 @@ fun AppRoot(
 ) {
     val state by model.state.collectAsState()
     when (state) {
-        VaultState.NONE -> WelcomeScreen(onCreate = model::create)
+        VaultState.NONE -> WelcomeScreen(onChoice = model::create)
         VaultState.LOCKED -> LockScreen(authenticate)
-        VaultState.UNLOCKED -> Unlocked(pendingLink)
+        VaultState.UNLOCKED -> Unlocked(pendingLink, model)
     }
 }
 
 @Composable
-private fun Unlocked(pendingLink: MutableStateFlow<String?>) {
+private fun Unlocked(
+    pendingLink: MutableStateFlow<String?>,
+    model: RootViewModel,
+) {
     val nav = rememberNavController()
     val link by pendingLink.collectAsState()
+    val firstRun by model.firstRun.collectAsState()
+    LaunchedEffect(firstRun) {
+        val choice = firstRun ?: return@LaunchedEffect
+        model.firstRunShown()
+        when (choice) {
+            FirstRun.SIGN_UP -> {
+                nav.navigate("signup")
+            }
+
+            FirstRun.LOG_IN -> {
+                nav.navigate("login")
+            }
+
+            FirstRun.ADVANCED -> {
+                nav.navigate("sync?link=")
+            }
+
+            FirstRun.OFFLINE -> {}
+        }
+    }
     LaunchedEffect(link) {
         val l = link ?: return@LaunchedEffect
         pendingLink.value = null
@@ -112,8 +154,20 @@ private fun Unlocked(pendingLink: MutableStateFlow<String?>) {
                 initialLink = it.arguments?.getString("link").orEmpty(),
                 onBack = { nav.popBackStack() },
                 onLogin = { nav.navigate("login") },
+                onSignup = { nav.navigate("signup") },
             )
         }
         composable("login") { LoginScreen(defaultServer = "", label = deviceLabel(), onBack = { nav.popBackStack() }) }
+        composable("signup") {
+            SignupScreen(
+                defaultServer = "",
+                label = deviceLabel(),
+                onBack = { nav.popBackStack() },
+                onLogin = {
+                    nav.popBackStack()
+                    nav.navigate("login")
+                },
+            )
+        }
     }
 }
