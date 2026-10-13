@@ -7,6 +7,7 @@ Self-hosted, end-to-end encrypted OTP authenticator: Android app + Python backen
 - `server/`: backend (Python, FastAPI, SQLite); deployment in [docs/deploy.md](docs/deploy.md), live sync in [docs/sync.md](docs/sync.md)
 - `android/`: Android app (Kotlin, Jetpack Compose)
 - `contracts/`: HTTP API contract (OpenAPI)
+- Releases: built and signed by GitHub Actions on a `v*` tag, see [RELEASING.md](RELEASING.md)
 
 ## Status
 
