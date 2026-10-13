@@ -35,6 +35,10 @@ info:
       then 1 h, then 24 h for a client that keeps failing). A successful login does not lift a block.
     - **Anonymized client addresses**: the server never stores or logs a client IP. `Session.last_ip` now
       holds an opaque, daily-rotating client id (`c_` + 12 hex), not an address.
+    - **Clock skew is recoverable**: `/srp/verify`, `/signup` and bootstrap `/enroll` check the timestamp
+      window first, so `401 stale_request` (with `server_time`) consumes no SRP handshake and no emailed
+      code and counts toward no lockout or block: correct the clock and resend the same body with fresh
+      headers. A stale request is never counted as an auth failure on any route.
     - `ServerInfo.history_retention_days` and `ServerInfo.languages`; new SSE event `account_deleted`;
       new problem codes `client_blocked`, `history_pruned`, `srp_unavailable`.
 
@@ -317,6 +321,7 @@ paths:
       description: |
         Signature headers with `X-UOTP-Device: pending`, verified with `device.ed25519_public_key`. A wrong
         proof is `401 srp_failed` (counted toward the account lockout); the session is consumed either way.
+        A stale timestamp is answered `401 stale_request` first, before the session is touched (retry the same body).
       security:
         - pendingDeviceSignature: []
       requestBody:
