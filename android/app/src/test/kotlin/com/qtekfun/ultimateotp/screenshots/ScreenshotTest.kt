@@ -86,6 +86,10 @@ class ScreenshotTest(
                 Look("cover-dark", COVER, dark = true),
                 Look("inner-dark", INNER, dark = true),
                 Look("inner-light", INNER, dark = false),
+                Look("phone-es-dark", "es-$PHONE", dark = true),
+                Look("phone-es-light-font1.3", "es-$PHONE", dark = false, fontScale = 1.3f),
+                Look("cover-es-dark-font1.3", "es-$COVER", dark = true, fontScale = 1.3f),
+                Look("inner-es-dark", "es-$INNER", dark = true),
             )
     }
 
@@ -222,6 +226,7 @@ class ScreenshotTest(
                 settings = Settings(),
                 statusText = null,
                 version = "0.2.0",
+                language = "",
                 actions = SettingsActions(),
             )
         }

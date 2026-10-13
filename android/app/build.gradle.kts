@@ -45,6 +45,11 @@ android {
         buildConfig = true
     }
 
+    // Brand icons are long paths by nature; see lint.xml.
+    lint {
+        lintConfig = file("lint.xml")
+    }
+
     packaging {
         // The JNA AAR and the libsodium AAR both carry native libraries; keep them uncompressed
         // and page-aligned (16 KB devices).

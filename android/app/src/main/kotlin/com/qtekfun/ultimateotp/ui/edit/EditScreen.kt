@@ -29,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -107,12 +108,13 @@ fun EditContent(
     var notes by rememberSaveable(item.id) { mutableStateOf(item.notes) }
     var favorite by rememberSaveable(item.id) { mutableStateOf(item.favorite) }
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    val digitsLabel = pluralStringResource(R.plurals.digits_count, item.otp.digits, item.otp.digits)
     FlowScaffold(title = stringResource(R.string.edit_account), onBack = onBack, modifier = modifier) {
         Row(horizontalArrangement = Arrangement.spacedBy(Space.Lg), verticalAlignment = Alignment.CenterVertically) {
             IssuerAvatar(issuer, label, iconKey = item.icon, size = 64.dp)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.Sm), verticalArrangement = Arrangement.spacedBy(Space.Xs)) {
                 AssistChip(onClick = {}, label = { Text(item.otp.type.name) })
-                AssistChip(onClick = {}, label = { Text(stringResource(R.string.digits_count, item.otp.digits)) })
+                AssistChip(onClick = {}, label = { Text(digitsLabel) })
                 AssistChip(onClick = {}, label = { Text(item.otp.algorithm.name) })
             }
         }

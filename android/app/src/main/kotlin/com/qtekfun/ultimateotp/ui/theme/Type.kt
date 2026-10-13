@@ -39,6 +39,9 @@ object CodeStyles {
             fontFeatureSettings = "tnum",
         )
     val Medium = Large.copy(fontSize = 24.sp, lineHeight = 30.sp)
+
+    /** Eight-digit codes on a grid card. */
+    val Dense = Large.copy(fontSize = 20.sp, lineHeight = 26.sp)
     val Small = Large.copy(fontSize = 17.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium)
     val Hero = Large.copy(fontSize = 52.sp, lineHeight = 60.sp, letterSpacing = 1.sp)
 }

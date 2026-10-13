@@ -76,6 +76,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -356,9 +357,11 @@ private fun CodesGrid(
     modifier: Modifier,
 ) {
     val dir = LocalLayoutDirection.current
+    // With large fonts the cards get wider, so fewer fit per row: nothing is cut off.
+    val fontScale = LocalDensity.current.fontScale
     val columns =
         when {
-            ui.grid -> GridCells.Adaptive(GridMinCell)
+            ui.grid -> GridCells.Adaptive(GridMinCell * fontScale.coerceAtLeast(1f))
             widthClass == WidthClass.COMPACT -> GridCells.Fixed(1)
             else -> GridCells.Adaptive(ListMinCell)
         }
