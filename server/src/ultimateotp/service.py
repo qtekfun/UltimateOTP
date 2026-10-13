@@ -14,7 +14,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from ultimateotp import b64, ids, signing
+from ultimateotp import b64, formats, ids, signing
 from ultimateotp.clock import Clock
 from ultimateotp.db import Database
 from ultimateotp.errors import ApiError
@@ -80,22 +80,36 @@ class Service:
         security_event(name, level=level, **fields)
         self.metrics.inc("uotp_events_total", name)
 
-    def _decode(self, value: str, max_bytes: int, field: str) -> bytes:
+    def _decode(self, value: str, max_bytes: int, field: str, sizes: tuple[int, ...] = ()) -> bytes:
+        """Strict base64url, non-empty, at most `max_bytes`, and one of `sizes` when given
+        (crypto-format v1 lengths, `formats.py`)."""
         try:
             data = b64.decode(value)
         except b64.InvalidBase64Error as exc:
             raise ApiError(400, "invalid_request", f"{field}: not base64url") from exc
-        if not data or len(data) > max_bytes:
+        if not data or len(data) > max_bytes or (sizes and len(data) not in sizes):
             raise ApiError(400, "invalid_request", f"{field}: bad length")
         return data
 
     def _check_bundle(self, keys: KeyBundle | PutKeysRequest) -> None:
         if (keys.password_wrap is None) != (keys.password_kdf is None):
             raise ApiError(400, "invalid_request", "password_wrap and password_kdf go together")
-        for name in ("password_wrap", "password_kdf", "recovery_wrap"):
-            value = getattr(keys, name)
-            if value is not None:
-                self._decode(value, self.settings.max_wrap_bytes, name)
+        limit = self.settings.max_wrap_bytes
+        if keys.password_wrap is not None and keys.password_kdf is not None:
+            self._decode(keys.password_wrap, limit, "password_wrap", formats.PASSWORD_WRAP_BYTES)
+            self._decode(keys.password_kdf, limit, "password_kdf", formats.KDF_PARAMS_BYTES)
+        self._decode(keys.recovery_wrap, limit, "recovery_wrap", formats.RECOVERY_WRAP_BYTES)
+
+    def _sealed(self, value: str) -> bytes:
+        return self._decode(
+            value, self.settings.max_wrap_bytes, "sealed_vault_key", formats.SEALED_VAULT_KEY_BYTES
+        )
+
+    def _blob(self, value: str) -> bytes:
+        data = self._decode(value, self.settings.max_blob_bytes, "blob")
+        if not formats.valid_blob_size(len(data)):
+            raise ApiError(400, "invalid_request", "blob: bad length")
+        return data
 
     @staticmethod
     def _account(conn: sqlite3.Connection, account_id: str) -> Row:
@@ -597,7 +611,7 @@ class Service:
     def approve_pairing(
         self, auth: DeviceAuth, pairing_id: str, body: ApproveRequest
     ) -> dict[str, Any]:
-        sealed = self._decode(body.sealed_vault_key, self.settings.max_wrap_bytes, "sealed")
+        sealed = self._sealed(body.sealed_vault_key)
         now = self.clock.now()
         with self.db.write() as conn:
             row = self._own_pairing(conn, auth, pairing_id)
@@ -782,9 +796,7 @@ class Service:
             raise ApiError(400, "duplicate_item")
         if not changed:
             raise ApiError(400, "empty_commit")
-        blobs = {
-            u.item_id: self._decode(u.blob, self.settings.max_blob_bytes, "blob") for u in upserts
-        }
+        blobs = {u.item_id: self._blob(u.blob) for u in upserts}
         existing = {
             r["item_id"]: (r["version"], bool(r["deleted"]), r["blob_sha256"])
             for r in conn.execute(
@@ -907,7 +919,7 @@ class Service:
                 "SELECT ed25519_public_key FROM devices WHERE id = ?", (auth.device_id,)
             ).fetchone()["ed25519_public_key"]
             for key in body.device_keys:
-                sealed = self._decode(key.sealed_vault_key, self.settings.max_wrap_bytes, "sealed")
+                sealed = self._sealed(key.sealed_vault_key)
                 message = signing.seal_message(
                     account["id"], body.new_key_epoch, key.device_id, sealed
                 )

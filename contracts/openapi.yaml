@@ -21,7 +21,9 @@ info:
     - **Binary values are base64url without padding** (RFC 4648 §5, alphabet `A-Z a-z 0-9 - _`, no `=`).
       The server never decodes the *meaning* of a blob: it only checks the encoding and the length. Every
       blob, wrap and KDF parameter set is opaque to the server; their formats live in
-      `docs/crypto-format.md` (owned by the Android work).
+      `docs/crypto-format.md` (owned by the Android work). Lengths checked (crypto-format v1 §12, `400
+      invalid_request` otherwise): `password_kdf` 29 bytes, `password_wrap` 73 or 146, `recovery_wrap` 73,
+      `sealed_vault_key` 123, item `blob` 45 + 256·k bytes with 1 <= k <= 240.
     - Times: integers, Unix seconds (UTC).
     - Ids: `account_id` = `acc_` + 22 base64url chars, `device_id` = `dev_` + 22, `pairing_id` = `pair_` + 22,
       all random and server-assigned. `item_id` is chosen by the client: a lowercase canonical UUID

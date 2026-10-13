@@ -6,9 +6,8 @@ import secrets
 from typing import Any
 
 from fastapi.testclient import TestClient
-from nacl.public import SealedBox
 
-from tests.client import Device, Vault, new_item_id, seal_for
+from tests.client import Device, Vault, new_item_id, open_grant, seal_for
 from tests.conftest import PASSWORD, Bootstrapped, Server, second_device
 from ultimateotp import b64, signing
 
@@ -75,7 +74,7 @@ def _rotation(
     device_keys = []
     for dev in devices:
         assert dev.device_id is not None
-        sealed = seal_for(dev.x25519, new_key)
+        sealed = seal_for(dev.x25519, new_key, vault.account_id, 2)
         device_keys.append(
             {
                 "device_id": dev.device_id,
@@ -120,7 +119,7 @@ def test_rotation_after_revocation(
     keys_b = b.get("/otp/v1/account/keys").json()
     assert keys_b["key_epoch"] == 2
     sealed = b64.decode(keys_b["device_key"]["sealed_vault_key"])
-    assert SealedBox(b.box_key).decrypt(sealed) == new_key
+    assert open_grant(b.box_key, sealed, vault.account_id, 2) == new_key
     items = b.get("/otp/v1/vault?since=0").json()["items"]
     fresh = Vault(account_id=vault.account_id, vault_key=new_key, key_epoch=2)
     assert all(

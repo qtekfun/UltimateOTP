@@ -1,17 +1,17 @@
 # SPDX-FileCopyrightText: 2026 UltimateOTP contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 """A reference client for the tests: device keys, request signing, signed heads, and the
-client-side crypto (vault key, wraps, item encryption).
-
-The crypto here follows docs/design.md §3 (Argon2id, XChaCha20-Poly1305, sealed boxes) with
-libsodium through PyNaCl. It stands in for `docs/crypto-format.md` (owned by the Android work)
-until that document exists: the server treats all of it as opaque bytes either way.
+client-side crypto of docs/crypto-format.md v1 (branch feat/android, commit c90fd7b): wraps
+(§4), item blobs (§6), sealed vault keys (§5.3). `tests/test_crypto_vectors.py` checks this code
+against that document's vectors, so the server tests run on real v1 ciphertext.
 """
 
 import hashlib
 import json
 import secrets
+import struct
 import time
+import unicodedata
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -21,46 +21,55 @@ from nacl import pwhash
 from nacl.bindings import (
     crypto_aead_xchacha20poly1305_ietf_decrypt,
     crypto_aead_xchacha20poly1305_ietf_encrypt,
+    sodium_pad,
+    sodium_unpad,
 )
-from nacl.public import PrivateKey, SealedBox
+from nacl.public import PrivateKey, PublicKey, SealedBox
 from nacl.signing import SigningKey, VerifyKey
 
 from ultimateotp import b64, signing
 
 PAD_BUCKET = 256
+ALG_ARGON2ID13 = 2
+# Cheap Argon2id for tests, inside the reader limits of §4.1 (real clients use 4 / 1 GiB).
+TEST_OPSLIMIT = 1
+TEST_MEMLIMIT = 8192
+WRAP_BYTES = 73
 
 
-# ---------------------------------------------------------------- client-side crypto
+# ---------------------------------------------------------------- client-side crypto (§2-§6)
 
 
-def aead_encrypt(key: bytes, plaintext: bytes, ad: bytes) -> bytes:
+def kdf(master: bytes, subkey_id: int, context: str) -> bytes:
+    """crypto_kdf_derive_from_key (BLAKE2b keyed, salt = LE64(id), personal = ctx)."""
+    salt = struct.pack("<Q", subkey_id) + bytes(8)
+    person = context.encode() + bytes(8)
+    return hashlib.blake2b(b"", digest_size=32, key=master, salt=salt, person=person).digest()
+
+
+def aead(key: bytes, nonce: bytes, message: bytes, ad: bytes) -> bytes:
+    return crypto_aead_xchacha20poly1305_ietf_encrypt(message, ad, nonce, key)
+
+
+def params_block(opslimit: int, memlimit: int, salt: bytes) -> bytes:
+    return bytes([ALG_ARGON2ID13]) + struct.pack(">IQ", opslimit, memlimit) + salt
+
+
+def derive_kek(password: str, block: bytes) -> bytes:
+    opslimit, memlimit = struct.unpack(">IQ", block[1:13])
+    data = unicodedata.normalize("NFC", password).encode()
+    return pwhash.argon2id.kdf(32, data, block[13:29], opslimit=opslimit, memlimit=memlimit)
+
+
+def wrap(kind: int, key: bytes, payload: bytes, key_epoch: int, params: bytes) -> bytes:
     nonce = secrets.token_bytes(24)
-    return b"\x01" + nonce + crypto_aead_xchacha20poly1305_ietf_encrypt(plaintext, ad, nonce, key)
+    ad = b"UOTP-WRAP-v1" + bytes([kind]) + struct.pack(">I", key_epoch) + params
+    return b"\x01" + nonce + aead(key, nonce, payload, ad)
 
 
-def aead_decrypt(key: bytes, blob: bytes, ad: bytes) -> bytes:
-    assert blob[0] == 1
+def unwrap(kind: int, key: bytes, blob: bytes, key_epoch: int, params: bytes) -> bytes:
+    ad = b"UOTP-WRAP-v1" + bytes([kind]) + struct.pack(">I", key_epoch) + params
     return crypto_aead_xchacha20poly1305_ietf_decrypt(blob[25:], ad, blob[1:25], key)
-
-
-def derive_kek(password: str, salt: bytes) -> bytes:
-    # Minimum limits keep the tests fast; real clients use MODERATE or more (design §3.1).
-    return pwhash.argon2id.kdf(
-        32,
-        password.encode(),
-        salt,
-        opslimit=pwhash.argon2id.OPSLIMIT_MIN,
-        memlimit=pwhash.argon2id.MEMLIMIT_MIN,
-    )
-
-
-def pad(data: bytes) -> bytes:
-    size = (len(data) // PAD_BUCKET + 1) * PAD_BUCKET
-    return data + b"\x80" + b"\x00" * (size - len(data) - 1)
-
-
-def unpad(data: bytes) -> bytes:
-    return data[: data.rindex(b"\x80")]
 
 
 @dataclass
@@ -74,35 +83,72 @@ class Vault:
     plaintext: dict[str, dict[str, Any]] = field(default_factory=dict)
     blobs: dict[str, tuple[int, bytes]] = field(default_factory=dict)
 
-    def item_ad(self, item_id: str, version: int) -> bytes:
-        return f"UOTP-ITEM-v1\n{self.account_id}\n{item_id}\n{version}".encode()
+    def item_ad(self, item_id: str, version: int, key_epoch: int) -> bytes:
+        account = self.account_id.encode()
+        return (
+            b"UOTP-ITEM-v1"
+            + bytes([len(account)])
+            + account
+            + uuid.UUID(item_id).bytes
+            + struct.pack(">QI", version, key_epoch)
+        )
 
     def encrypt_item(self, item_id: str, item: dict[str, Any], version: int) -> bytes:
-        plaintext = pad(json.dumps(item, sort_keys=True).encode())
-        return aead_encrypt(self.vault_key, plaintext, self.item_ad(item_id, version))
+        padded = sodium_pad(json.dumps(item, sort_keys=True).encode(), PAD_BUCKET)
+        nonce = secrets.token_bytes(24)
+        k_item = kdf(self.vault_key, 1, "uotpitem")
+        ad = self.item_ad(item_id, version, self.key_epoch)
+        return b"\x01" + struct.pack(">I", self.key_epoch) + nonce + aead(k_item, nonce, padded, ad)
 
     def decrypt_item(self, item_id: str, blob: bytes, version: int) -> dict[str, Any]:
-        data = aead_decrypt(self.vault_key, blob, self.item_ad(item_id, version))
-        result: dict[str, Any] = json.loads(unpad(data))
+        assert blob[0] == 1
+        (key_epoch,) = struct.unpack(">I", blob[1:5])
+        k_item = kdf(self.vault_key, 1, "uotpitem")
+        padded = crypto_aead_xchacha20poly1305_ietf_decrypt(
+            blob[29:], self.item_ad(item_id, version, key_epoch), blob[5:29], k_item
+        )
+        result: dict[str, Any] = json.loads(sodium_unpad(padded, PAD_BUCKET))
         return result
 
     def key_bundle(self, password: str, recovery_key: bytes) -> dict[str, str]:
-        salt = secrets.token_bytes(16)
-        kek = derive_kek(password, salt)
-        params = json.dumps({"alg": "argon2id", "salt": b64.encode(salt), "ops": 1}).encode()
+        """`KeyBundle` of the contract as §4.2 maps it."""
+        params = params_block(TEST_OPSLIMIT, TEST_MEMLIMIT, secrets.token_bytes(16))
+        kek_pw = derive_kek(password, params)
+        kek_rk = kdf(recovery_key, 1, "uotprcvy")
         return {
-            "password_wrap": b64.encode(aead_encrypt(kek, self.vault_key, b"UOTP-WRAP-pw")),
             "password_kdf": b64.encode(params),
-            "recovery_wrap": b64.encode(
-                aead_encrypt(recovery_key, self.vault_key, b"UOTP-WRAP-rk")
+            "password_wrap": b64.encode(
+                wrap(1, kek_pw, self.vault_key, self.key_epoch, params)
+                + wrap(3, kek_pw, kek_rk, 0, params)
             ),
+            "recovery_wrap": b64.encode(wrap(2, kek_rk, self.vault_key, self.key_epoch, b"")),
         }
 
 
 def unwrap_with_password(bundle: dict[str, Any], password: str) -> bytes:
-    params = json.loads(b64.decode(bundle["password_kdf"]))
-    kek = derive_kek(password, b64.decode(params["salt"]))
-    return aead_decrypt(kek, b64.decode(bundle["password_wrap"]), b"UOTP-WRAP-pw")
+    params = b64.decode(bundle["password_kdf"])
+    kind1 = b64.decode(bundle["password_wrap"])[:WRAP_BYTES]
+    return unwrap(1, derive_kek(password, params), kind1, bundle["key_epoch"], params)
+
+
+def grant_plaintext(account_id: str, key_epoch: int, vault_key: bytes) -> bytes:
+    return b"UOTP-GRANT-v1" + struct.pack(">I", key_epoch) + vault_key + account_id.encode()
+
+
+def seal_for(
+    recipient_x25519_b64: str, vault_key: bytes, account_id: str = "", key_epoch: int = 1
+) -> bytes:
+    """§5.3 sealed vault key (123 bytes)."""
+    plaintext = grant_plaintext(account_id, key_epoch, vault_key)
+    return SealedBox(PublicKey(b64.decode(recipient_x25519_b64))).encrypt(plaintext)
+
+
+def open_grant(box_key: PrivateKey, sealed: bytes, account_id: str, key_epoch: int) -> bytes:
+    plaintext = SealedBox(box_key).decrypt(sealed)
+    prefix = b"UOTP-GRANT-v1" + struct.pack(">I", key_epoch)
+    assert plaintext.startswith(prefix)
+    assert plaintext[len(prefix) + 32 :] == account_id.encode()
+    return plaintext[len(prefix) : len(prefix) + 32]
 
 
 # ---------------------------------------------------------------- device and signing
@@ -295,13 +341,3 @@ def apply_changes(vault: Vault, data: dict[str, Any], trusted: dict[str, str]) -
 
 def new_item_id() -> str:
     return str(uuid.uuid4())
-
-
-def seal_for(recipient_x25519_b64: str, vault_key: bytes) -> bytes:
-    from nacl.public import PublicKey  # noqa: PLC0415
-
-    return SealedBox(PublicKey(b64.decode(recipient_x25519_b64))).encrypt(vault_key)
-
-
-def sha256_hex(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
