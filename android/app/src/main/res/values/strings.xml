@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 UltimateOTP contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<resources>
+    <string name="app_name" translatable="false">UltimateOTP</string>
+    <string name="welcome_title">Your codes, on your devices</string>
+    <string name="welcome_body">Codes are stored encrypted on this phone and work without a network. Sync with your own server is optional.</string>
+    <string name="welcome_create">Create vault</string>
+    <string name="locked_title">Vault locked</string>
+    <string name="unlock">Unlock</string>
+    <string name="unlock_title">Unlock UltimateOTP</string>
+    <string name="unlock_subtitle">Use your fingerprint, face or screen lock</string>
+    <string name="settings">Settings</string>
+    <string name="add_account">Add account</string>
+    <string name="edit_account">Edit account</string>
+    <string name="search">Search</string>
+    <string name="empty_vault">No accounts yet. Tap + to scan a QR code or enter a key.</string>
+    <string name="code_copied">Code copied; the clipboard is cleared shortly</string>
+    <string name="next_code">Next code</string>
+    <string name="back">Back</string>
+    <string name="tab_scan">Scan</string>
+    <string name="tab_manual">Enter key</string>
+    <string name="tab_paste">Paste</string>
+    <string name="invalid_code">This is not an OTP account QR code or link.</string>
+    <string name="camera_rationale">The camera is only used to read QR codes; nothing is recorded.</string>
+    <string name="allow_camera">Allow camera</string>
+    <string name="scan_image">Read a QR code from an image</string>
+    <string name="paste_hint">otpauth:// or otpauth-migration:// links, one per line</string>
+    <string name="add">Add</string>
+    <string name="issuer">Issuer</string>
+    <string name="account">Account</string>
+    <string name="secret">Secret key (base32)</string>
+    <string name="type">Type</string>
+    <string name="algorithm">Algorithm</string>
+    <string name="digits">Digits</string>
+    <string name="period">Period (s)</string>
+    <string name="tags">Tags, comma separated</string>
+    <string name="notes">Notes</string>
+    <string name="favorite">Favorite</string>
+    <string name="save">Save</string>
+    <string name="delete">Delete</string>
+    <string name="delete_title">Delete this account?</string>
+    <string name="delete_body">Make sure 2FA is disabled on the service or you have another way in. Synced devices delete it too.</string>
+    <string name="cancel">Cancel</string>
+    <string name="ok">OK</string>
+    <string name="section_security">Security</string>
+    <string name="lock_timeout">Locks after %1$d s in the background</string>
+    <string name="lock_after">Lock after %1$d s</string>
+    <string name="section_backup">Backup</string>
+    <string name="export_encrypted">Encrypted export (.uotp)</string>
+    <string name="export_plain">Plain export (otpauth list)</string>
+    <string name="export_plain_warning">The file will contain every secret in clear text. Anyone who reads it can generate your codes. Only use it to move to another app, and delete it afterwards.</string>
+    <string name="export_anyway">Export anyway</string>
+    <string name="import_file">Import a file (UltimateOTP, Ente Auth, otpauth list)</string>
+    <string name="export_password_title">Export password (at least 8 characters)</string>
+    <string name="import_password_title">This file is encrypted. Password?</string>
+    <string name="wrong_password">Wrong password, try again</string>
+    <string name="password">Password</string>
+    <string name="password_repeat">Repeat password</string>
+    <string name="working">Working…</string>
+    <string name="exported">Export written</string>
+    <string name="imported">New: %1$d · Already present: %2$d · Unreadable: %3$d</string>
+    <string name="transfer_failed">Failed: the file could not be read or written</string>
+    <string name="section_sync">Sync</string>
+    <string name="sync_open">Server sync and devices</string>
+</resources>
