@@ -79,9 +79,11 @@ Caveats, handled in code:
   call is pinned by the vectors in §13, so a later swap to another binding does not change a byte.
 - **Bug found while writing this spec:** `PasswordHash.pwhash(…, password: String, …)` passes
   `String.length` (UTF-16 code units) as the password length while JNA encodes the string as
-  UTF-8, so any non-ASCII password is truncated. `:core:crypto` therefore calls `crypto_pwhash`
-  through the already loaded native library with the UTF-8 bytes and their real length. The
-  vector `password_kdf[1]` (non-ASCII password) catches a regression. To be reported upstream.
+  UTF-8, so any non-ASCII password is truncated; it also passes `memlimit` (a C `size_t`) as a
+  64-bit integer, which breaks the call on 32-bit ARM. `:core:crypto` therefore calls
+  `crypto_pwhash` through the already loaded native library with the UTF-8 bytes, their real
+  length and a `NativeLong` memory limit. The vector `password_kdf[1]` (non-ASCII password)
+  catches a regression. To be reported upstream.
 - F-Droid: the AAR carries prebuilt `libsodium.so` and JNA's `libjnidispatch.so` from Maven
   Central. F-Droid accepts Maven Central dependencies; the build stays reproducible because every
   artifact is pinned by hash (`gradle/verification-metadata.xml`). If F-Droid ever requires
@@ -152,6 +154,9 @@ exports:  own password, Argon2id + secretstream, independent of VK (§10)
   doubles operations (Ente's `deriveSensitiveKey` strategy, which keeps the total work equal):
   `(4, 1 GiB)` → `(8, 512 MiB)` → `(16, 256 MiB)`. Below 256 MiB the writer fails; it never
   silently weakens further. The parameters actually used are stored next to the salt.
+  On Android a failed allocation is not a reliable signal (with memory overcommit the 1 GiB
+  `mmap` can succeed and the low-memory killer then ends the app), so the app starts the ladder
+  at the first rung whose memory × 1.5 fits in `ActivityManager.MemoryInfo.availMem`.
 - **Reader limits**: `1 <= opslimit <= 4096`, `8192 <= memlimit <= 1073741824`. Anything else is
   rejected before deriving (protects against a server that sends absurd parameters).
 - The KDF only runs when a device enrolls with the password, the password changes, or the vault
