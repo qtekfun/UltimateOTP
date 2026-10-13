@@ -1,1 +1,1 @@
-Corregido: crear la cuenta e iniciar sesión fallaba en las versiones publicadas. Novedad: mostrar u ocultar contraseñas y botón para copiar las palabras de recuperación.
+Nuevo diseño, importación desde Aegis, 2FAS, andOTP, Raivo y Bitwarden, papelera, orden manual, autorrelleno, bloqueo por inactividad y gestión de la cuenta. Corrige el fallo al crear la cuenta.

@@ -14,8 +14,28 @@ contract (`contracts/openapi.yaml`) have their own version numbers and are menti
 
 ## [Unreleased]
 
-Planned as 0.1.3 (`versionCode` 4). Not tagged yet: the first F-Droid build should be this version,
-not 0.1.2, whose release build crashes on sign-up (see Fixed).
+## [0.2.0] - 2026-10-14
+
+Android `versionCode` 4. Tag `v0.2.0`. Server API contract 1.2.0 (server image `0.2.0`). The first version meant
+for F-Droid: 0.1.2 crashes on sign-up. Upgrade note: server migration `0002` erases the client addresses
+stored by 1.1.0 and cannot be undone; back up `ultimateotp.db` first.
+
+### Features
+
+- New design: green, dark-first theme, logo and adaptive icon, issuer logos, cards with the next code and
+  a countdown ring, a two-pane layout on foldables, Spanish translation and a language setting.
+- Import from Aegis, 2FAS, andOTP, Raivo and Bitwarden/Proton; trash with undo and 30-day retention (and
+  recovery from the server history); manual ordering; Autofill; configurable inactivity lock; local
+  exportable error log; account management (delete account, change email, sign out other devices, export).
+- Server: anonymised client addresses (daily salted hash), temporary blocks with growing back-off,
+  vault history, Spanish and English emails, Prometheus metrics, Grafana dashboard and alert rules.
+
+### Known issues
+
+- KB-6: a 32-bit process may be unable to allocate the 1 GiB Argon2id needs when creating an account
+  (see docs/testing.md).
+- Autofill, biometric prompts and the Keystore timing were not exercised on real hardware by the
+  automated tests.
 
 ### Fixed
 
@@ -98,7 +118,8 @@ Android `versionCode` 1. Tag `v0.1.0`. First tagged version; API contract 1.1.0,
   `docs/crypto-vectors/`), checked by both the Android and the server tests.
 - GPL-3.0-or-later license; release workflow that builds and signs the APK from a `v*` tag.
 
-[Unreleased]: https://github.com/qtekfun/UltimateOTP/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/qtekfun/UltimateOTP/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/qtekfun/UltimateOTP/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/qtekfun/UltimateOTP/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/qtekfun/UltimateOTP/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/qtekfun/UltimateOTP/releases/tag/v0.1.0
