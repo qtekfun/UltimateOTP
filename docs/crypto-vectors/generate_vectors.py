@@ -109,6 +109,37 @@ def manifest(live: list[tuple[str, int, bytes]]) -> bytes:
     return "".join(f"{i}:{v}:{sha256_b64u(blob)}\n" for i, v, blob in sorted(live)).encode()
 
 
+# ---- SRP-6a (RFC 5054 group arithmetic; proofs as Ente's server) -----------------------------
+
+def srp_pad(n: int, size: int) -> bytes:
+    return n.to_bytes(size, "big")
+
+
+def srp_session(N: int, g: int, H, I: bytes, P: bytes, s: bytes, a: int, b: int) -> dict:
+    size = (N.bit_length() + 7) // 8
+    h = lambda *parts: H(b"".join(parts)).digest()
+    k = int.from_bytes(h(srp_pad(N, size), srp_pad(g, size)), "big")
+    x = int.from_bytes(h(s, h(I + b":" + P)), "big")
+    v = pow(g, x, N)
+    A = pow(g, a, N)
+    B = (k * v + pow(g, b, N)) % N
+    u = int.from_bytes(h(srp_pad(A, size), srp_pad(B, size)), "big")
+    S_client = pow((B - k * v) % N, a + u * x, N)
+    S_server = pow(A * pow(v, u, N) % N, b, N)
+    assert S_client == S_server
+    M1 = h(srp_pad(A, size), srp_pad(B, size), srp_pad(S_client, size))
+    M2 = h(srp_pad(A, size), M1, srp_pad(S_client, size))
+    return {"k": k, "x": x, "v": v, "A": A, "B": B, "u": u, "S": S_client, "M1": M1, "M2": M2, "size": size}
+
+
+def check_rfc5054(rfc: dict) -> None:
+    t = rfc["rfc5054_appendix_b"]
+    r = srp_session(int(t["N"], 16), t["g"], hashlib.sha1, t["I"].encode(), t["P"].encode(),
+                    bytes.fromhex(t["s"]), int(t["a"], 16), int(t["b"], 16))
+    for name, key in [("k", "k"), ("x", "x"), ("v", "v"), ("A", "A"), ("B", "B"), ("u", "u"), ("S", "premaster")]:
+        assert r[name] == int(t[key], 16), name
+
+
 def secretstream_encrypt(key: bytes, chunks: list[bytes], ad: bytes) -> tuple[bytes, bytes]:
     state = b.crypto_secretstream_xchacha20poly1305_state()
     header = b.crypto_secretstream_xchacha20poly1305_init_push(state, key)
@@ -270,6 +301,28 @@ def main() -> None:
                                                          "salt": base64.b64encode(ente_salt).decode()},
                             "encryptedData": base64.b64encode(ente_ct).decode(),
                             "encryptionNonce": base64.b64encode(ente_header).decode()})}
+
+    # 8. SRP login (crypto-format.md §4.4): RFC 5054 Appendix B checks the arithmetic, then the
+    #    UltimateOTP parameters (4096-bit group, g = 5, SHA-256) with fixed private values.
+    with open("rfc5054.json", encoding="utf-8") as f:
+        rfc = json.load(f)
+    check_rfc5054(rfc)
+    login_subkey = kdf(kek_pw, 1, "loginctx")[:16]
+    srp_salt = bytes([0x5C]) * 16
+    identity = "3f1a2b4c-5d6e-4f70-8192-a3b4c5d6e7f8"
+    a_priv = int.from_bytes(bytes([0xA1]) * 64, "big")
+    b_priv = int.from_bytes(bytes([0xB2]) * 64, "big")
+    r = srp_session(int(rfc["n4096"], 16), 5, hashlib.sha256, identity.encode(), login_subkey, srp_salt,
+                    a_priv, b_priv)
+    size = r["size"]
+    vectors["srp"] = {
+        "rfc5054_appendix_b": rfc["rfc5054_appendix_b"],
+        "kek_pw_hex": h(kek_pw), "login_subkey_hex": h(login_subkey), "srp_user_id": identity,
+        "srp_salt_hex": h(srp_salt), "a_hex": h(srp_pad(a_priv, 64)), "b_hex": h(srp_pad(b_priv, 64)),
+        "verifier_b64u": b64u(srp_pad(r["v"], size)), "A_b64u": b64u(srp_pad(r["A"], size)),
+        "B_b64u": b64u(srp_pad(r["B"], size)), "u_hex": h(r["u"].to_bytes(32, "big")),
+        "S_hex": h(srp_pad(r["S"], size)), "M1_b64u": b64u(r["M1"]), "M2_b64u": b64u(r["M2"]),
+    }
 
     print(json.dumps(vectors, indent=2, ensure_ascii=False))
 
