@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Gavel
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
@@ -56,6 +57,7 @@ import com.qtekfun.ultimateotp.ui.components.SettingsSwitchRow
 import com.qtekfun.ultimateotp.ui.components.UotpLogo
 import com.qtekfun.ultimateotp.ui.theme.ContentMaxWidth
 import com.qtekfun.ultimateotp.ui.theme.Space
+import com.qtekfun.ultimateotp.util.AppLanguage
 import com.qtekfun.ultimateotp.util.Settings
 import com.qtekfun.ultimateotp.util.ThemeMode
 
@@ -71,6 +73,7 @@ data class SettingsActions(
     val onAmoled: (Boolean) -> Unit = {},
     val onDynamicColor: (Boolean) -> Unit = {},
     val onGridLayout: (Boolean) -> Unit = {},
+    val onLanguage: (String) -> Unit = {},
     val onExportEncrypted: () -> Unit = {},
     val onExportPlain: () -> Unit = {},
     val onImport: () -> Unit = {},
@@ -79,7 +82,7 @@ data class SettingsActions(
 private val LOCK_CHOICES = listOf(0, 30, 60, 300)
 private val CLIPBOARD_CHOICES = listOf(10, 30, 60, 120)
 
-private enum class Picker { LOCK, CLIPBOARD, THEME }
+private enum class Picker { LOCK, CLIPBOARD, THEME, LANGUAGE }
 
 /** Settings, stateless: grouped sections with icons (Security, Sync, Appearance, Data, About). */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -88,6 +91,7 @@ fun SettingsContent(
     settings: Settings,
     statusText: String?,
     version: String,
+    language: String,
     actions: SettingsActions,
     modifier: Modifier = Modifier,
 ) {
@@ -122,7 +126,7 @@ fun SettingsContent(
             ) {
                 SecurityGroup(settings, actions) { picker = it }
                 SyncGroup(actions)
-                AppearanceGroup(settings, actions) { picker = it }
+                AppearanceGroup(settings, language, actions) { picker = it }
                 DataGroup(statusText, actions)
                 AboutGroup(version)
             }
@@ -168,9 +172,29 @@ fun SettingsContent(
             )
         }
 
+        Picker.LANGUAGE -> {
+            ChoiceDialog(
+                title = stringResource(R.string.language_title),
+                options = (listOf("") + AppLanguage.SUPPORTED).map { it to stringResource(languageLabel(it)) },
+                selected = language,
+                onSelect = {
+                    actions.onLanguage(it)
+                    picker = null
+                },
+                onDismiss = { picker = null },
+            )
+        }
+
         null -> {}
     }
 }
+
+private fun languageLabel(tag: String): Int =
+    when (tag) {
+        "en" -> R.string.language_en
+        "es" -> R.string.language_es
+        else -> R.string.language_system
+    }
 
 private fun themeLabel(mode: ThemeMode): Int =
     when (mode) {
@@ -232,10 +256,18 @@ private fun SyncGroup(actions: SettingsActions) {
 @Composable
 private fun AppearanceGroup(
     settings: Settings,
+    language: String,
     actions: SettingsActions,
     open: (Picker) -> Unit,
 ) {
     SettingsGroup(stringResource(R.string.section_appearance)) {
+        SettingsRow(
+            Icons.Filled.Language,
+            stringResource(R.string.language_title),
+            subtitle = stringResource(languageLabel(language)),
+            onClick = { open(Picker.LANGUAGE) },
+        )
+        RowDivider()
         SettingsRow(
             Icons.Filled.DarkMode,
             stringResource(R.string.theme_title),

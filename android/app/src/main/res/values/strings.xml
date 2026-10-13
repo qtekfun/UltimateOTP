@@ -215,7 +215,10 @@
     <string name="secret_invalid">This is not a valid base32 key.</string>
     <string name="advanced_options">Advanced options</string>
     <string name="import_file_hint">UltimateOTP exports, Ente Auth exports and plain otpauth lists.</string>
-    <string name="digits_count">%1$d digits</string>
+    <plurals name="digits_count">
+        <item quantity="one">%1$d digit</item>
+        <item quantity="other">%1$d digits</item>
+    </plurals>
 
     <!-- Edit -->
     <string name="edit_options">Options</string>
@@ -255,6 +258,10 @@
     <string name="section_about">About</string>
     <string name="section_devices">Devices</string>
     <string name="section_account">Account</string>
+    <string name="language_title">Language</string>
+    <string name="language_system">System default</string>
+    <string name="language_en" translatable="false">English</string>
+    <string name="language_es" translatable="false">Español</string>
     <string name="theme_title">Theme</string>
     <string name="theme_system">System default</string>
     <string name="theme_light">Light</string>
