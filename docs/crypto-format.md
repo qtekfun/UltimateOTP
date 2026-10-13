@@ -341,6 +341,21 @@ compatibility). Version 1 fields:
 | `favorite` | bool | |
 | `created`, `updated` | int | ms since the Unix epoch |
 | `updated_by` | string | `device_id` of the last writer, `local` offline (merge tie-breaker) |
+| `trashed` | bool | optional; in the trash (restorable for 30 days after `trash_changed`) |
+| `trash_changed` | int | optional; ms when `trashed` last changed |
+| `order` | string | optional; manual position, a base-62 fractional key over `0-9A-Za-z` that never ends in `0` |
+| `order_changed` | int | optional; ms when `order` last changed |
+| `autofill` | string[] | optional; Android package names and web domains the code may be offered for |
+
+The optional fields are written only when set, so a client that predates them keeps them in its
+unknown-key bag and writes them back. They merge on their own, apart from the rest of the item:
+`trashed` and `order` each come from the side with the larger `*_changed` (ties: `trashed` wins,
+then the larger key), so a reorder or a trash on one device and an edit on another both survive
+and no conflict copy is made. Reordering and trashing do not change `updated`. Entries sort by
+`(order, id)` first, then entries without `order` (favorites, issuer, label, id).
+`autofill` is ordinary content (an edit). The 30-day trash is this flag, not a server
+deletion; the server's own history (contract 1.2.0) is the second net behind it
+(docs/sync.md).
 
 Before encryption the JSON is padded with `sodium_pad(…, 256)` (ISO/IEC 7816-4: `0x80` then
 zeros up to the next multiple of 256), so the server only learns the length in 256-byte buckets.

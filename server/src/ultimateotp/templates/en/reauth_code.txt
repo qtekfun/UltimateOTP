@@ -1,0 +1,7 @@
+Subject: Confirm a sensitive action in UltimateOTP
+
+Your UltimateOTP confirmation code is $code.
+
+It expires in $minutes minutes and works once. It is needed to delete your account or to change its email address.
+
+If you did not ask for it, a device signed in to your account is trying to do that. Open UltimateOTP on a device you trust, review "Active sessions" and sign out the ones you do not recognize. Do not share this code.

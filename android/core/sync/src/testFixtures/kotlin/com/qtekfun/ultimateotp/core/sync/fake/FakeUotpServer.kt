@@ -8,16 +8,26 @@ import com.qtekfun.ultimateotp.core.crypto.Ed25519
 import com.qtekfun.ultimateotp.core.crypto.SrpGroup
 import com.qtekfun.ultimateotp.core.crypto.Statements
 import com.qtekfun.ultimateotp.core.sync.api.Accepted
+import com.qtekfun.ultimateotp.core.sync.api.AccountDeleted
+import com.qtekfun.ultimateotp.core.sync.api.AccountEmail
 import com.qtekfun.ultimateotp.core.sync.api.AccountKeys
 import com.qtekfun.ultimateotp.core.sync.api.ApproveRequest
 import com.qtekfun.ultimateotp.core.sync.api.Approver
+import com.qtekfun.ultimateotp.core.sync.api.ChangeEmailRequest
 import com.qtekfun.ultimateotp.core.sync.api.CommitRequest
+import com.qtekfun.ultimateotp.core.sync.api.ConfirmEmailRequest
+import com.qtekfun.ultimateotp.core.sync.api.DeleteAccountRequest
 import com.qtekfun.ultimateotp.core.sync.api.Device
 import com.qtekfun.ultimateotp.core.sync.api.DeviceList
+import com.qtekfun.ultimateotp.core.sync.api.EmailChangePending
 import com.qtekfun.ultimateotp.core.sync.api.EmailRequest
 import com.qtekfun.ultimateotp.core.sync.api.EnrollRequest
 import com.qtekfun.ultimateotp.core.sync.api.EnrollResponse
 import com.qtekfun.ultimateotp.core.sync.api.EnrollmentToken
+import com.qtekfun.ultimateotp.core.sync.api.HistoricHead
+import com.qtekfun.ultimateotp.core.sync.api.HistoricItem
+import com.qtekfun.ultimateotp.core.sync.api.HistoricVault
+import com.qtekfun.ultimateotp.core.sync.api.HistoryVersion
 import com.qtekfun.ultimateotp.core.sync.api.Item
 import com.qtekfun.ultimateotp.core.sync.api.JoinRequest
 import com.qtekfun.ultimateotp.core.sync.api.JoinResponse
@@ -29,7 +39,12 @@ import com.qtekfun.ultimateotp.core.sync.api.PairingDevice
 import com.qtekfun.ultimateotp.core.sync.api.PairingResult
 import com.qtekfun.ultimateotp.core.sync.api.Problem
 import com.qtekfun.ultimateotp.core.sync.api.PutKeysRequest
+import com.qtekfun.ultimateotp.core.sync.api.Reauth
+import com.qtekfun.ultimateotp.core.sync.api.ReauthSrpRequest
+import com.qtekfun.ultimateotp.core.sync.api.ReauthSrpSession
 import com.qtekfun.ultimateotp.core.sync.api.RecoveryKeys
+import com.qtekfun.ultimateotp.core.sync.api.RemovedCounts
+import com.qtekfun.ultimateotp.core.sync.api.RevokeOthersResult
 import com.qtekfun.ultimateotp.core.sync.api.RotateRequest
 import com.qtekfun.ultimateotp.core.sync.api.SealedVaultKeyDto
 import com.qtekfun.ultimateotp.core.sync.api.ServerInfo
@@ -41,10 +56,17 @@ import com.qtekfun.ultimateotp.core.sync.api.SrpLoginResponse
 import com.qtekfun.ultimateotp.core.sync.api.SrpSession
 import com.qtekfun.ultimateotp.core.sync.api.SrpSessionRequest
 import com.qtekfun.ultimateotp.core.sync.api.SrpVerifyRequest
+import com.qtekfun.ultimateotp.core.sync.api.TrashItem
 import com.qtekfun.ultimateotp.core.sync.api.VaultChanges
 import com.qtekfun.ultimateotp.core.sync.api.VaultHead
+import com.qtekfun.ultimateotp.core.sync.api.VaultHistory
+import com.qtekfun.ultimateotp.core.sync.api.VaultTrash
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -53,7 +75,7 @@ import java.math.BigInteger
 import kotlin.math.abs
 
 /**
- * An in-memory implementation of the `/otp/v1` contract (contracts/openapi.yaml 1.0.0) on
+ * An in-memory implementation of the `/otp/v1` contract (contracts/openapi.yaml 1.2.0) on
  * MockWebServer, for client tests: it verifies request, head, seal and certificate signatures
  * like the real server, enforces optimistic concurrency, and its [state] can be replaced to
  * simulate a restored backup or tampering. Single account; no rate limits or network policy
@@ -64,6 +86,11 @@ import kotlin.math.abs
  * `signup_disabled`, `keys_required`, proof of possession with `X-UOTP-Device: pending`), in the
  * real server's order. [accountExists] false starts with no account at all (a fresh server);
  * true is an account made by `ultimateotp account-create` for [email], waiting for its bootstrap.
+ *
+ * Contract 1.2.0: version history (`/vault/history`, `/vault/history/{version}`, `/vault/trash`,
+ * `VaultChanges.full`), account management (`/account/reauth/email-code` and `/account/reauth/srp`, `/account/delete`,
+ * `/account/email/change` and `/account/email/confirm`, `/account/export`, `/devices/revoke-others`). History is kept in full (the
+ * test hooks [pruneHistoryBefore] and [compactTombstones] simulate aging out and compaction).
  */
 @Suppress("TooManyFunctions", "LargeClass")
 class FakeUotpServer(
@@ -133,6 +160,34 @@ class FakeUotpServer(
     }
 
     private val srpSessions = mutableMapOf<String, Triple<BigInteger, BigInteger, BigInteger>>() // id -> (A, b, B)
+    private val reauthSessions = mutableMapOf<String, Triple<BigInteger, BigInteger, BigInteger>>()
+
+    /** One committed version as kept for history: what changed and the live set after it. */
+    private class Snapshot(
+        val info: HistoryVersion,
+        val items: Map<String, Item>,
+    )
+
+    private val history = mutableListOf<Snapshot>()
+    private val trashed = linkedMapOf<String, TrashItem>()
+    private var compactedUpTo = 0L
+    private var pendingEmail: String? = null
+
+    /** True once the account was deleted through `/account/delete`. */
+    var accountDeleted: Boolean = false
+        private set
+
+    /** Test hook: forget every history version up to and including [version] (it "aged out"). */
+    fun pruneHistoryBefore(version: Long) {
+        history.removeAll { it.info.version <= version }
+    }
+
+    /** Test hook: drop the tombstones, so an older `since` is answered with `full = true`. */
+    fun compactTombstones() {
+        val s = state
+        state = State(s.head, s.items.filterValues { !it.deleted })
+        compactedUpTo = s.head.version
+    }
 
     /** The vault: head and items. */
     data class State(
@@ -231,7 +286,7 @@ class FakeUotpServer(
         val s = path.removePrefix("/otp/v1/").split('/')
         return when {
             path == "/otp/v1/server-info" -> {
-                ok(ServerInfo.serializer(), ServerInfo("1.0.0", now))
+                ok(ServerInfo.serializer(), ServerInfo("1.2.0", now, historyRetentionDays = RETENTION_DAYS, languages = listOf("en", "es")))
             }
 
             path == "/otp/v1/enroll" -> {
@@ -326,6 +381,48 @@ class FakeUotpServer(
 
             path == "/otp/v1/vault/rotate" -> {
                 rotate(r)
+            }
+
+            path == "/otp/v1/vault/history" -> {
+                vaultHistory(r)
+            }
+
+            path == "/otp/v1/vault/trash" -> {
+                vaultTrash(r)
+            }
+
+            s.size == 3 && s[0] == "vault" && s[1] == "history" -> {
+                historicVault(r, s[2])
+            }
+
+            path == "/otp/v1/account/reauth/email-code" -> {
+                device(r)
+                emailCode(accountEmail.orEmpty())
+                ok(Accepted.serializer(), Accepted(), ACCEPTED)
+            }
+
+            path == "/otp/v1/account/reauth/srp" -> {
+                reauthSrp(r)
+            }
+
+            path == "/otp/v1/account/delete" -> {
+                deleteAccount(r)
+            }
+
+            path == "/otp/v1/account/email/change" -> {
+                changeEmail(r)
+            }
+
+            path == "/otp/v1/account/email/confirm" -> {
+                confirmEmail(r)
+            }
+
+            path == "/otp/v1/account/export" -> {
+                exportAccount(r)
+            }
+
+            path == "/otp/v1/devices/revoke-others" -> {
+                revokeOthers(r)
             }
 
             path == "/otp/v1/events" -> {
@@ -558,10 +655,12 @@ class FakeUotpServer(
         return ok(
             VaultChanges.serializer(),
             VaultChanges(
-                s.head,
+                // The flags are the server's current ones, not those at commit time (they are not signed).
+                s.head.copy(rotationRequired = rotationRequired, devicesRevision = devicesRevision),
                 s.items.values
                     .filter { it.version > since }
                     .sortedBy { it.version },
+                full = since == 0L || since < compactedUpTo,
             ),
         )
     }
@@ -597,8 +696,28 @@ class FakeUotpServer(
             items[id] = Item(id, v, true, null)
         }
         checkHead(d, v, keyEpoch, req.head.signature, items)
+        req.deletes.forEach { id ->
+            val before = state.items[id]
+            if (before != null && !before.deleted) {
+                trashed[id] = TrashItem(id, before.version, before.blob!!, keyEpoch, v, now)
+            }
+        }
+        req.upserts.forEach { trashed.remove(it.itemId) }
         state = State(head(v, d.deviceId, req.head.signature), items)
+        record("commit", d.deviceId, req.head.signature, req.upserts.map { it.itemId }, req.deletes)
         return ok(VaultHead.serializer(), state.head)
+    }
+
+    private fun record(
+        kind: String,
+        signedBy: String,
+        signature: String,
+        upserted: List<String>,
+        deleted: List<String>,
+    ) {
+        val s = state
+        val info = HistoryVersion(s.head.version, keyEpoch, kind, signedBy, signature, now, upserted, deleted)
+        history.add(Snapshot(info, s.items.filterValues { !it.deleted }))
     }
 
     private fun rotate(r: RecordedRequest): MockResponse {
@@ -631,12 +750,227 @@ class FakeUotpServer(
                 SealedVaultKeyDto(keyEpoch, it.sealedVaultKey, d.deviceId, it.sealSignature)
         }
         state = State(head(v, d.deviceId, req.head.signature), items)
+        // Old-epoch ciphertext would defeat the rotation: history and trash restart here.
+        history.clear()
+        trashed.clear()
+        record("rotate", d.deviceId, req.head.signature, req.upserts.map { it.itemId }, req.deletes)
         return ok(VaultHead.serializer(), state.head)
+    }
+
+    // ---- history, trash and account management (contract 1.2.0) ---------------------------------
+
+    private fun vaultHistory(r: RecordedRequest): MockResponse {
+        device(r)
+        val limit = r.url.queryParameter("limit")?.toIntOrNull() ?: DEFAULT_PAGE
+        val before = r.url.queryParameter("before")?.toLongOrNull()
+        val page =
+            history
+                .map { it.info }
+                .filter { before == null || it.version < before }
+                .sortedByDescending { it.version }
+        val shown = page.take(limit)
+        val next = if (page.size > shown.size) shown.last().version else null
+        return ok(VaultHistory.serializer(), VaultHistory(RETENTION_DAYS, state.head.version, shown, next))
+    }
+
+    private fun historicVault(
+        r: RecordedRequest,
+        rawVersion: String,
+    ): MockResponse {
+        device(r)
+        val version = rawVersion.toLongOrNull() ?: fail(BAD, "invalid_request")
+        if (version > state.head.version) fail(NOT_FOUND, "not_found")
+        val snap = history.firstOrNull { it.info.version == version } ?: fail(GONE, "history_pruned")
+        val only = r.url.queryParameter("item_id")
+        val items = snap.items.values.filter { only == null || it.itemId == only }
+        val head = HistoricHead(accountId, version, snap.info.keyEpoch, snap.info.signedBy, snap.info.signature, snap.info.committedAt)
+        return ok(
+            HistoricVault.serializer(),
+            HistoricVault(head, complete = only == null, items = items.map { HistoricItem(it.itemId, it.version, it.blob!!) }),
+        )
+    }
+
+    private fun vaultTrash(r: RecordedRequest): MockResponse {
+        device(r)
+        val items = trashed.values.sortedByDescending { it.deletedAt }
+        return ok(VaultTrash.serializer(), VaultTrash(RETENTION_DAYS, items))
+    }
+
+    private fun reauthSrp(r: RecordedRequest): MockResponse {
+        device(r)
+        val req = body(r, ReauthSrpRequest.serializer())
+        val srp = bundle?.srp ?: fail(CONFLICT, "srp_unavailable")
+        val v = BigInteger(1, B64u.decode(srp.srpVerifier))
+        val b = BigInteger(1, ByteArray(EPHEMERAL).also { java.security.SecureRandom().nextBytes(it) })
+        val bigB =
+            group.k
+                .multiply(v)
+                .add(group.g.modPow(b, group.n))
+                .mod(group.n)
+        val id = "srp_" + "r${++counter}".padEnd(ID_CHARS, 'z')
+        reauthSessions[id] = Triple(BigInteger(1, B64u.decode(req.srpA)), b, bigB)
+        return ok(
+            ReauthSrpSession.serializer(),
+            ReauthSrpSession(id, B64u.encode(group.pad(bigB)), srp.srpUserId, srp.srpSalt, bundle?.passwordKdf.orEmpty()),
+        )
+    }
+
+    /** A fresh proof for a dangerous action: exactly one of the emailed code or the SRP proof. */
+    private fun checkReauth(reauth: Reauth) {
+        val code = reauth.emailCode
+        val proof = reauth.srp
+        when {
+            (code == null) == (proof == null) -> {
+                fail(BAD, "invalid_request")
+            }
+
+            code != null -> {
+                if (!checkCode(accountEmail.orEmpty(), code)) fail(UNAUTHORIZED, "invalid_email_code")
+            }
+
+            else -> {
+                val (bigA, b, bigB) = reauthSessions.remove(proof!!.sessionId) ?: fail(UNAUTHORIZED, "srp_failed")
+                val srp = bundle?.srp ?: fail(CONFLICT, "srp_unavailable")
+                val m1 = expectedM1(bigA, b, bigB, srp.srpVerifier, srp.srpUserId, srp.srpSalt)
+                if (!m1.contentEquals(B64u.decode(proof.srpM1))) fail(UNAUTHORIZED, "srp_failed")
+            }
+        }
+    }
+
+    private fun deleteAccount(r: RecordedRequest): MockResponse {
+        device(r)
+        checkReauth(body(r, DeleteAccountRequest.serializer()).reauth)
+        val removed =
+            RemovedCounts(
+                devices = devices.size,
+                items = state.items.size,
+                historyVersions = history.size,
+                historyItems = history.sumOf { it.info.upserted.size },
+            )
+        devices.clear()
+        sealedKeys.clear()
+        bundle = null
+        accountEmail = null
+        state = State(head(0, null, null), emptyMap())
+        history.clear()
+        trashed.clear()
+        accountDeleted = true
+        return ok(AccountDeleted.serializer(), AccountDeleted("deleted", accountId, now, removed))
+    }
+
+    private fun changeEmail(r: RecordedRequest): MockResponse {
+        device(r)
+        val req = body(r, ChangeEmailRequest.serializer())
+        checkReauth(req.reauth)
+        // Always 202; the code is only "sent" when the address is free.
+        pendingEmail = req.newEmail.lowercase()
+        if (pendingEmail != accountEmail) {
+            val code = (100_000 + ++counter).toString()
+            codes[pendingEmail!!] = Code(code)
+            lastEmailCode = code
+        }
+        return ok(EmailChangePending.serializer(), EmailChangePending("pending", now + TEN_MIN), ACCEPTED)
+    }
+
+    private fun confirmEmail(r: RecordedRequest): MockResponse {
+        device(r)
+        val req = body(r, ConfirmEmailRequest.serializer())
+        val target = pendingEmail ?: fail(UNAUTHORIZED, "invalid_email_code")
+        if (!checkCode(target, req.code)) fail(UNAUTHORIZED, "invalid_email_code")
+        accountEmail = target
+        pendingEmail = null
+        return ok(AccountEmail.serializer(), AccountEmail(accountId, target))
+    }
+
+    private fun exportAccount(r: RecordedRequest): MockResponse {
+        val me = device(r)
+        val b = bundle ?: fail(NOT_FOUND, "not_found")
+        val keys = KeyAttributes(keyEpoch, keysRevision, b.passwordWrap, b.passwordKdf, b.recoveryWrap)
+        val doc =
+            JsonObject(
+                mapOf(
+                    "format" to JsonPrimitive("ultimateotp-server-export-1"),
+                    "exported_at" to JsonPrimitive(now),
+                    "account" to
+                        JsonObject(
+                            mapOf(
+                                "account_id" to JsonPrimitive(accountId),
+                                "email" to (accountEmail?.let(::JsonPrimitive) ?: JsonNull),
+                                "created_at" to JsonPrimitive(now),
+                            ),
+                        ),
+                    "head" to json.encodeToJsonElement(VaultHead.serializer(), state.head),
+                    "keys" to json.encodeToJsonElement(KeyAttributes.serializer(), keys),
+                    "device_key" to
+                        (
+                            sealedKeys[me.deviceId to keyEpoch]?.let { json.encodeToJsonElement(SealedVaultKeyDto.serializer(), it) }
+                                ?: JsonNull
+                        ),
+                    "devices" to JsonArray(devices.values.map { json.encodeToJsonElement(Device.serializer(), it) }),
+                    "items" to JsonArray(state.items.values.map { json.encodeToJsonElement(Item.serializer(), it) }),
+                    "history" to
+                        JsonObject(
+                            mapOf(
+                                "retention_days" to JsonPrimitive(RETENTION_DAYS),
+                                "versions" to JsonArray(history.map { json.encodeToJsonElement(HistoryVersion.serializer(), it.info) }),
+                                "items" to JsonArray(emptyList()),
+                            ),
+                        ),
+                ),
+            )
+        return MockResponse
+            .Builder()
+            .code(OK)
+            .addHeader("Content-Type", "application/json")
+            .addHeader("Content-Disposition", "attachment; filename=\"ultimateotp-export.json\"")
+            .body(doc.toString())
+            .build()
+    }
+
+    private fun revokeOthers(r: RecordedRequest): MockResponse {
+        val me = device(r)
+        val others = devices.values.filter { it.deviceId != me.deviceId && it.revokedAt == null }
+        others.forEach {
+            devices[it.deviceId] = it.copy(revokedAt = now)
+            sealedKeys.keys.removeAll { k -> k.first == it.deviceId }
+        }
+        if (others.isNotEmpty()) {
+            rotationRequired = true
+            devicesRevision++
+        }
+        return ok(RevokeOthersResult.serializer(), RevokeOthersResult(others.map { it.deviceId }, devicesRevision, rotationRequired))
     }
 
     // ---- SRP-6a server side (contract 1.1.0) -----------------------------------------------------
 
     private val group = SrpGroup.RFC5054_4096
+
+    private fun srpKey(
+        bigA: BigInteger,
+        b: BigInteger,
+        bigB: BigInteger,
+        v: BigInteger,
+    ): ByteArray {
+        val u = group.hInt(group.pad(bigA), group.pad(bigB))
+        return group.h(group.pad(bigA.multiply(v.modPow(u, group.n)).mod(group.n).modPow(b, group.n)))
+    }
+
+    /** The client proof M1 the server expects for this handshake (RFC 5054 / the contract's SRP). */
+    private fun expectedM1(
+        bigA: BigInteger,
+        b: BigInteger,
+        bigB: BigInteger,
+        verifier: String,
+        userId: String,
+        salt: String,
+    ): ByteArray {
+        val v = BigInteger(1, B64u.decode(verifier))
+        val key = srpKey(bigA, b, bigB, v)
+        val hn = group.h(group.pad(group.n))
+        val hg = group.h(group.pad(group.g))
+        val xor = ByteArray(hn.size) { (hn[it].toInt() xor hg[it].toInt()).toByte() }
+        return group.h(xor, group.h(userId.toByteArray()), B64u.decode(salt), group.pad(bigA), group.pad(bigB), key)
+    }
 
     private fun srpAttributes(r: RecordedRequest): MockResponse {
         val req = body(r, EmailRequest.serializer())
@@ -673,13 +1007,8 @@ class FakeUotpServer(
         val (bigA, b, bigB) = srpSessions.remove(req.sessionId) ?: fail(UNAUTHORIZED, "srp_failed")
         val srp = bundle?.srp ?: fail(UNAUTHORIZED, "srp_failed")
         val v = BigInteger(1, B64u.decode(srp.srpVerifier))
-        val u = group.hInt(group.pad(bigA), group.pad(bigB))
-        val key = group.h(group.pad(bigA.multiply(v.modPow(u, group.n)).mod(group.n).modPow(b, group.n)))
-        val hn = group.h(group.pad(group.n))
-        val hg = group.h(group.pad(group.g))
-        val xor = ByteArray(hn.size) { (hn[it].toInt() xor hg[it].toInt()).toByte() }
-        val identity = srp.srpUserId.toByteArray()
-        val m1 = group.h(xor, group.h(identity), B64u.decode(srp.srpSalt), group.pad(bigA), group.pad(bigB), key)
+        val m1 = expectedM1(bigA, b, bigB, srp.srpVerifier, srp.srpUserId, srp.srpSalt)
+        val key = srpKey(bigA, b, bigB, v)
         if (!m1.contentEquals(B64u.decode(req.srpM1))) fail(UNAUTHORIZED, "srp_failed")
         val m2 = group.h(group.pad(bigA), m1, key)
         val d = Device(nextId("dev_"), req.device.label, req.device.ed25519, req.device.x25519, "password", null, null, now, null, null)
@@ -758,6 +1087,9 @@ class FakeUotpServer(
         const val SKEW = 60L
         const val TEN_MIN = 600L
         const val MAX_RECOVERY_FETCHES = 5
+        const val RETENTION_DAYS = 30
+        const val DEFAULT_PAGE = 100
+        const val GONE = 410
         const val OK = 200
         const val CREATED = 201
         const val BAD = 400

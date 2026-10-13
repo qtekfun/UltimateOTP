@@ -4,6 +4,7 @@
 package com.qtekfun.ultimateotp
 
 import android.app.Application
+import com.qtekfun.ultimateotp.core.support.diag.DiagnosticsLog
 import com.qtekfun.ultimateotp.sync.SyncController
 import com.qtekfun.ultimateotp.util.AutoLock
 import dagger.hilt.android.HiltAndroidApp
@@ -15,8 +16,13 @@ class UotpApplication : Application() {
 
     @Inject lateinit var sync: SyncController
 
+    @Inject lateinit var diagnostics: DiagnosticsLog
+
     override fun onCreate() {
         super.onCreate()
+        // First, so a crash while the rest starts is recorded too.
+        diagnostics.installCrashHandler()
+        diagnostics.event("app", "started")
         autoLock.start()
         sync.start()
     }

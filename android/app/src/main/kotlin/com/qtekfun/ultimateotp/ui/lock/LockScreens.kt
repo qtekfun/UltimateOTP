@@ -21,11 +21,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -33,11 +28,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.qtekfun.ultimateotp.R
-import com.qtekfun.ultimateotp.core.vault.secure.AuthenticationRequiredException
-import com.qtekfun.ultimateotp.ui.Authenticate
 import com.qtekfun.ultimateotp.ui.FirstRun
 import com.qtekfun.ultimateotp.ui.RootViewModel
-import kotlinx.coroutines.launch
 
 /** First run, like Ente Auth: create an account, log in, or stay offline; token/pairing is advanced. */
 @Composable
@@ -60,28 +52,12 @@ fun WelcomeScreen(onChoice: (FirstRun) -> Unit) {
 }
 
 @Composable
-fun LockScreen(
-    authenticate: Authenticate,
-    model: RootViewModel = hiltViewModel(),
-) {
-    val scope = rememberCoroutineScope()
-    var error by remember { mutableStateOf<String?>(null) }
-    val unlock = {
-        scope.launch {
-            try {
-                model.vault.unlock()
-            } catch (_: AuthenticationRequiredException) {
-                authenticate({ scope.launch { runCatching { model.vault.unlock() }.onFailure { error = it.message } } }, { error = it })
-            }
-        }
-        Unit
-    }
-    LaunchedEffect(Unit) { unlock() }
+fun LockScreen(model: RootViewModel = hiltViewModel()) {
+    LaunchedEffect(Unit) { model.unlock() }
     Centered {
         Icon(Icons.Default.Lock, contentDescription = null)
         Text(stringResource(R.string.locked_title), style = MaterialTheme.typography.headlineSmall)
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Button(onClick = unlock) { Text(stringResource(R.string.unlock)) }
+        Button(onClick = model::unlock) { Text(stringResource(R.string.unlock)) }
     }
 }
 

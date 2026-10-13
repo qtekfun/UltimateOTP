@@ -59,6 +59,14 @@ interface SyncStore {
     /** This device's keys; throws if the vault is locked or the device has none yet. */
     fun deviceKeys(): DeviceKeys
 
+    /**
+     * Fails now, with the store's own exception, if the next write of a secret would fail (the
+     * Keystore key needs the user to authenticate, or is gone). The engine calls it before every
+     * request that changes server state, so the user authenticates first and nothing is left
+     * half-done. The default is for stores that never refuse.
+     */
+    suspend fun ensureWritable() {}
+
     /** Persists device keys created for enrollment (Keystore-wrapped). */
     suspend fun saveDeviceKeys(keys: DeviceKeys)
 

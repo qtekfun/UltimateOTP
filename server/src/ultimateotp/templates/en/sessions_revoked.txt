@@ -1,0 +1,5 @@
+Subject: UltimateOTP: other devices were signed out
+
+$count other device(s) were signed out of your UltimateOTP account from "$device". Their sessions stop working at once, and the vault key will be rotated.
+
+If this was not you, change your password and sign in again on your own devices.

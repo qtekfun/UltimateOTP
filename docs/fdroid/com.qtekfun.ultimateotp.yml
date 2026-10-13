@@ -1,0 +1,32 @@
+Categories:
+  - Password & 2FA
+License: GPL-3.0-or-later
+AuthorName: qtekfun
+SourceCode: https://github.com/qtekfun/UltimateOTP
+IssueTracker: https://github.com/qtekfun/UltimateOTP/issues
+Changelog: https://github.com/qtekfun/UltimateOTP/blob/HEAD/CHANGELOG.md
+
+AutoName: UltimateOTP
+
+RepoType: git
+Repo: https://github.com/qtekfun/UltimateOTP.git
+Binaries: https://github.com/qtekfun/UltimateOTP/releases/download/v%v/UltimateOTP-%v.apk
+
+Builds:
+  - versionName: 0.1.3
+    versionCode: 4
+    commit: deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+    subdir: android/app
+    sudo:
+      - apt-get update
+      - apt-get install -y openjdk-21-jdk-headless
+      - update-java-alternatives -a
+    gradle:
+      - yes
+
+AllowedAPKSigningKeys: 931735d60412c03ff4d72dac23d4bb321ce5a0853d121fffb3c901020e0b1b6b
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$
+CurrentVersion: 0.1.3
+CurrentVersionCode: 4

@@ -285,3 +285,78 @@ def test_stream_ends_after_max_age(live: Callable[..., Live]) -> None:
             sa.next("hello")
             assert sa.closed.wait(DEADLINE_S)
         assert server.service.broker.count() == 0
+
+
+def test_account_deletion_closes_every_stream(live: Callable[..., Live]) -> None:
+    server = live()
+    with httpx.Client(base_url=server.url) as client:
+        (a, b), vault = _bootstrap(server, client, 2)
+        a.commit(vault, {new_item_id(): {"issuer": "x"}})
+        with streams(server, a, b) as (sa, sb):
+            sa.next("hello")
+            sb.next("hello")
+            start, proof = a.reauth_srp(PASSWORD)
+            assert start.status_code == 200
+            deleted = a.post("/otp/v1/account/delete", {"reauth": {"srp": proof}})
+            assert deleted.status_code == 200, deleted.text
+            for stream in (sa, sb):
+                data, _ = stream.next("account_deleted")
+                assert data == {}
+                assert stream.closed.wait(DEADLINE_S)
+        deadline = time.monotonic() + DEADLINE_S
+        while server.service.broker.count() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert server.service.broker.count() == 0
+
+
+def test_revoke_others_reaches_the_signed_out_devices(live: Callable[..., Live]) -> None:
+    server = live()
+    with httpx.Client(base_url=server.url) as client:
+        (a, b, c), _ = _bootstrap(server, client, 3)
+        with streams(server, a, b, c) as (sa, sb, sc):
+            for stream in (sa, sb, sc):
+                stream.next("hello")
+            assert a.post("/otp/v1/devices/revoke-others").status_code == 200
+            assert sb.next("revoked")[0] == {"device_id": b.device_id}
+            assert sc.next("revoked")[0] == {"device_id": c.device_id}
+            assert sb.closed.wait(DEADLINE_S)
+            assert sc.closed.wait(DEADLINE_S)
+            assert sa.next("devices")[0]["devices_revision"] == 4
+            assert not sa.closed.is_set()
+
+
+def test_real_server_blocks_and_logs_no_client_address(
+    live: Callable[..., Live],
+) -> None:
+    """Over real sockets: the peer is 127.0.0.1 (not on the LAN list here), uvicorn's own logs
+    run through the same redaction, and nothing prints the peer."""
+    import io  # noqa: PLC0415
+    import logging  # noqa: PLC0415
+
+    from ultimateotp.logging import JsonFormatter, RedactingFilter  # noqa: PLC0415
+
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(JsonFormatter())
+    handler.addFilter(RedactingFilter())
+    root = logging.getLogger()
+    root.addHandler(handler)
+    old_level = root.level
+    root.setLevel(logging.DEBUG)
+    try:
+        server = live(lan_networks="10.0.0.0/8", block_threshold=3)
+        with httpx.Client(base_url=server.url) as client:
+            codes = [
+                client.get("/otp/v1/devices", headers={"X-UOTP-Device": "dev_" + "A" * 22})
+                for _ in range(4)
+            ]
+            assert [r.status_code for r in codes] == [401, 401, 401, 429]
+            assert codes[-1].json()["code"] == "client_blocked"
+            assert client.get("/healthz").status_code == 200
+    finally:
+        root.removeHandler(handler)
+        root.setLevel(old_level)
+    logs = stream.getvalue()
+    assert "client.blocked" in logs
+    assert "127.0.0.1" not in logs
+    assert "client_id" in logs
