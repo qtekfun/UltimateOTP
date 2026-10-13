@@ -260,10 +260,20 @@ class SyncEngineTest {
         val e = EnrollLink.parse("uotp://enroll?server=https%3A%2F%2Fotp.example&token=uoe_x")!!
         assertEquals("https://otp.example", e.server)
         assertEquals(EnrollmentPolicy.Choice.Refused, EnrollmentPolicy.choose("https://otp.example.com", "", allowRemote = false))
-        assertEquals(EnrollmentPolicy.Choice.Use("http://192.168.1.5:8080"), EnrollmentPolicy.choose("http://192.168.1.5:8080", "", false))
         assertEquals(
-            EnrollmentPolicy.Choice.Use("http://10.0.0.2"),
-            EnrollmentPolicy.choose("https://otp.example.com", "http://10.0.0.2", false),
+            EnrollmentPolicy.Choice.Use("https://192.168.1.5:8443"),
+            EnrollmentPolicy.choose("https://192.168.1.5:8443", "", false),
+        )
+        assertEquals(
+            EnrollmentPolicy.Choice.Use("https://otp.lan"),
+            EnrollmentPolicy.choose("https://otp.example.com", "https://otp.lan", false),
+        )
+        // Cleartext is refused early with its own answer, except for debuggable builds.
+        assertEquals(EnrollmentPolicy.Choice.InsecureUrl, EnrollmentPolicy.choose("http://192.168.1.5:8080", "", false))
+        assertEquals(EnrollmentPolicy.Choice.InsecureUrl, EnrollmentPolicy.choose("https://otp.example.com", "http://10.0.0.2", false))
+        assertEquals(
+            EnrollmentPolicy.Choice.Use("http://192.168.1.5:8080"),
+            EnrollmentPolicy.choose("http://192.168.1.5:8080", "", false, allowCleartext = true),
         )
         assertTrue(EnrollmentPolicy.isLocal("http://100.101.1.1"))
         assertEquals(null, PairLink.parse("uotp://pair?v=2&s=x&p=y&k=z&a=w"))

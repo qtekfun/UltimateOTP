@@ -105,6 +105,7 @@
     <string name="pair_add">Add a device</string>
     <string name="fail_network">The server could not be reached.</string>
     <string name="fail_secret">Wrong password or recovery key.</string>
+    <string name="fail_insecure_url">The server address must start with https://. Plain http:// is not accepted.</string>
     <string name="fail_lan">Enrollment only works from your home network. Set the LAN address, or allow remote enrollment.</string>
     <string name="fail_rejected">The server\'s data failed verification and was not used. Your local codes are untouched.</string>
     <string name="fail_refused">The server refused the request (expired or used token or session).</string>
