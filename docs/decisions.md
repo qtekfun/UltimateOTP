@@ -33,3 +33,16 @@ Guiding rule from the owner: when in doubt, behave like Ente Auth. These decisio
 10. **Recovery key: 24 words, like Ente.** The recovery key is shown once as a 24-word BIP-39 mnemonic of 256-bit entropy. It is stored by the user and wraps the vault key; the server keeps only that wrapped copy.
 11. **Export compatible in spirit with Ente's encrypted export.** Argon2id plus XChaCha20-Poly1305 secretstream with the KDF params in the header, as in 3. Import of Ente's plain and encrypted exports remains in scope.
 12. **Server backups and rollback:** documented as the backend says. Restoring an old server backup looks like a rollback to devices; the app offers "upload my local copy" to re-seed the server from a device after a restore.
+13. **Email one-time codes, like Ente, sent through Resend** (decided 2026-10-13).
+    - The account identifier is an email address.
+    - Logging in on a new device requires, in this order:
+      1. a 6-digit one-time code sent by email: valid 10 minutes, single use, at most 5 attempts, then rate-limited;
+      2. the SRP password proof from 6.
+    - The email check is on by default for every new-device login. Like Ente's "email verification" setting, the owner can turn it off per account from the CLI, but not by default.
+    - Email is also used for account creation (when the CLI creates an account, the email must be verified once).
+    - Recovery-key use and vault-key rotation send an email notice in addition to ntfy (7).
+    - The server never puts secrets, codes of OTP entries or vault data in emails, only the login code and event notices.
+    - **Transport:** SMTP with STARTTLS on port 587 to Resend, the relay the owner already uses for Ente (`smtp.resend.com`, user `resend`, the password being the Resend API key). The settings are `UOTP_SMTP_HOST`, `UOTP_SMTP_PORT`, `UOTP_SMTP_USER` and `UOTP_SMTP_FROM`. The API key comes from a Docker secret, never an env var or the logs.
+    - If SMTP is not configured, the server refuses to start unless `UOTP_EMAIL_VERIFICATION=disabled` is set explicitly (for local development).
+    - Codes are stored hashed (SHA-256 with a per-code salt) and compared in constant time.
+    - Per-email and per-IP send limits stop the server from being used to spam mailboxes.
