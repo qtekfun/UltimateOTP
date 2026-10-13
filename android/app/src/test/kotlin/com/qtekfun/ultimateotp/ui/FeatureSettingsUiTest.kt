@@ -4,77 +4,83 @@
 package com.qtekfun.ultimateotp.ui
 
 import android.app.Application
-import android.content.Context
-import androidx.compose.ui.test.hasText
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.test.core.app.ApplicationProvider
+import androidx.compose.ui.test.performScrollTo
 import com.qtekfun.ultimateotp.R
-import com.qtekfun.ultimateotp.core.support.lock.LockTimeout
-import com.qtekfun.ultimateotp.features.FeatureSettingsSection
-import com.qtekfun.ultimateotp.features.FeatureSettingsViewModel
-import com.qtekfun.ultimateotp.util.AppSettings
+import com.qtekfun.ultimateotp.ui.settings.SettingsActions
+import com.qtekfun.ultimateotp.ui.settings.SettingsContent
+import com.qtekfun.ultimateotp.util.Settings
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/** The feature block of the settings screen: lock timeout picker, navigation buttons, error log. */
+/** The settings of the added features on the redesigned screen: lock timeout picker, navigation rows, error log. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], application = Application::class)
 class FeatureSettingsUiTest {
     @get:Rule val rule = createEmptyComposeRule()
     private val ui = Ui(rule)
     private val calls = mutableListOf<String>()
-    private lateinit var model: FeatureSettingsViewModel
+    private var settings by mutableStateOf(Settings(lockTimeoutSeconds = 60))
 
     private val host =
         Host(rule) {
-            FeatureSettingsSection(
-                onTrash = { calls += "trash" },
-                onAccount = { calls += "account" },
-                onAutofillAssociations = { calls += "associations" },
-                model = model,
+            SettingsContent(
+                settings = settings,
+                statusText = null,
+                version = "test",
+                language = "",
+                autofillEnabled = false,
+                actions =
+                    SettingsActions(
+                        onTrash = { calls += "trash" },
+                        onAccount = { calls += "account" },
+                        onAutofillSettings = { calls += "autofill" },
+                        onAutofillAssociations = { calls += "associations" },
+                        onShareLog = { calls += "share" },
+                        onSaveLog = { calls += "save" },
+                        onClearLog = { calls += "clear" },
+                        onLockTimeout = { settings = settings.copy(lockTimeoutSeconds = it) },
+                    ),
             )
         }
 
-    @Before
-    fun setUp() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        model = FeatureSettingsViewModel(context, AppSettings(context), testDiagnostics())
-    }
-
     @Test
-    fun `its buttons navigate and the log can be shared and cleared`() {
+    fun `its rows navigate and the log can be shared, saved and cleared`() {
         host.start(Screen.COVER)
         ui.see(string(R.string.section_autofill))
         ui.see(string(R.string.autofill_state_off))
-        ui.tap(string(R.string.autofill_associations))
-        ui.tap(string(R.string.trash))
-        ui.tap(string(R.string.account_settings))
-        assertEquals(listOf("associations", "trash", "account"), calls)
-        ui.tap(string(R.string.autofill_enable))
-        ui.tap(string(R.string.diagnostics_share))
-        ui.tap(string(R.string.diagnostics_clear))
-        assertFalse(model.autofillEnabled())
+        for (
+        id in
+        listOf(
+            R.string.autofill_associations,
+            R.string.autofill_enable,
+            R.string.account_settings,
+            R.string.trash,
+            R.string.diagnostics_share,
+            R.string.diagnostics_save,
+            R.string.diagnostics_clear,
+        )
+        ) {
+            rule.onNodeWithText(string(id)).performScrollTo().performClick()
+        }
+        assertEquals(listOf("associations", "autofill", "account", "trash", "share", "save", "clear"), calls)
     }
 
     @Test
-    fun `the lock timeout is picked from a dialog and kept`() {
-        host.start(Screen.INNER)
-        // The stored value may be left over from another test in this JVM, so match by prefix.
-        val opener = hasText(string(R.string.lock_timeout_title) + ": ", substring = true)
-        rule.onNode(opener).performClick()
-        ui.tap(string(R.string.lock_choice_5m))
-        ui.waitFor(string(R.string.lock_timeout_title) + ": " + string(R.string.lock_choice_5m))
-        assertEquals(LockTimeout.MINUTES_5, model.lockTimeout.value)
-        // Cancel leaves the dialog without changing anything.
-        rule.onNode(opener).performClick()
-        ui.tap(string(R.string.cancel))
-        ui.notSee(string(R.string.lock_choice_never))
+    fun `the lock timeout is picked from a dialog and can be never`() {
+        host.start(Screen.COVER)
+        ui.tap(string(R.string.lock_timeout_title))
+        ui.tap(string(R.string.lock_choice_never))
+        assertEquals(-1, settings.lockTimeoutSeconds)
+        ui.waitFor(string(R.string.lock_choice_never))
     }
 }

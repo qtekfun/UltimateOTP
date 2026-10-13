@@ -7,23 +7,17 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.ContextWrapper
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
-import com.qtekfun.ultimateotp.R
 import com.qtekfun.ultimateotp.util.SecureClipboard
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.internal.GeneratedComponentManager
 import javax.inject.Inject
 
+/** Gives screens the secure clipboard for the recovery words (marked sensitive, cleared after the delay). */
 @HiltViewModel
 class WordsClipboardViewModel
     @Inject
@@ -34,28 +28,22 @@ class WordsClipboardViewModel
     }
 
 /**
- * Copies the recovery words as one line, to paste into a password manager (screenshots are blocked).
- * It uses the app's secure clipboard: marked sensitive, so no preview, and cleared after the delay.
+ * What the screens that show recovery words copy with: the app's secure clipboard in the Hilt
+ * activity; in a plain activity (the JVM UI tests host screens in one, and Hilt only exists in a
+ * Hilt activity) the words go to the plain clipboard, with no automatic clearing.
  */
 @Composable
-fun CopyWordsButton(words: List<String>) {
-    // Hilt only exists in a Hilt activity; the JVM UI tests host screens in a plain one, where
-    // the words go to the plain clipboard (no automatic clearing).
+fun rememberWordsCopier(): (String) -> Unit {
     val context = LocalContext.current
     val model: WordsClipboardViewModel? = if (context.hostActivity() is GeneratedComponentManager<*>) hiltViewModel() else null
-    var copied by rememberSaveable { mutableStateOf(false) }
-    OutlinedButton(
-        onClick = {
-            val text = words.joinToString(" ")
+    return remember(model, context) {
+        { text ->
             if (model != null) {
                 model.copy(text)
             } else {
                 context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("", text))
             }
-            copied = true
-        },
-    ) {
-        Text(stringResource(if (copied) R.string.words_copied else R.string.copy_words))
+        }
     }
 }
 

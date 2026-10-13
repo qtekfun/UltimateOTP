@@ -3,11 +3,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <resources>
     <!-- Inactivity lock -->
-    <string name="lock_timeout_title">Lock after</string>
-    <string name="lock_choice_immediately">Immediately when leaving the app</string>
-    <string name="lock_choice_30s">30 seconds</string>
-    <string name="lock_choice_1m">1 minute</string>
-    <string name="lock_choice_5m">5 minutes</string>
     <string name="lock_choice_never">Never</string>
 
     <!-- Autofill -->
@@ -30,7 +25,6 @@
     <string name="diagnostics_clear">Clear error log</string>
 
     <!-- Trash -->
-    <string name="trash">Trash</string>
     <string name="trash_empty">The trash is empty. Deleted entries stay here for 30 days.</string>
     <string name="trash_restore">Restore</string>
     <string name="trash_delete_forever">Delete forever</string>

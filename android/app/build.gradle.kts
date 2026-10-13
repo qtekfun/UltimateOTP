@@ -59,6 +59,11 @@ android {
         buildConfig = true
     }
 
+    // Brand icons are long paths by nature; see lint.xml.
+    lint {
+        lintConfig = file("lint.xml")
+    }
+
     packaging {
         // The JNA AAR and the libsodium AAR both carry native libraries; keep them uncompressed
         // and page-aligned (16 KB devices).
@@ -90,6 +95,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.core)
+    implementation(libs.androidx.compose.material.icons.extended)
+    implementation(libs.androidx.core.splashscreen)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     implementation(libs.androidx.navigation.compose)
@@ -110,17 +117,24 @@ dependencies {
     testImplementation(libs.junit4)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
-    testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(testFixtures(project(":core:sync")))
-    // Compose UI tests on the JVM (Robolectric). The test activity is not declared in any manifest
-    // (ui-test-manifest would ship in the build under test); Robolectric builds it directly.
+    // Screenshots of the screens on the JVM (Robolectric native graphics); test scope only.
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(testFixtures(project(":core:sync")))
 
     // Instrumented tests (emulator, CI only): black-box UI Automator, see docs/testing.md.
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.uiautomator)
+}
+
+// The screen screenshots (src/test/.../screenshots) are written on every test run, to
+// build/screenshots, for review; they are not compared against goldens (fonts differ per host).
+tasks.withType<Test>().configureEach {
+    systemProperty("roborazzi.test.record", "true")
 }
 
 // What R8 did to the classes that are reached by name at run time (JNA binds libsodium by

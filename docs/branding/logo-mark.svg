@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2026 UltimateOTP contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The mark alone on a transparent background (the in-app logo, ic_logo.xml). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="28 28 52 52" width="512" height="512">
+  <defs>
+    <linearGradient id="ring" gradientUnits="userSpaceOnUse" x1="32" y1="32" x2="76" y2="76">
+      <stop offset="0" stop-color="#1FB86A"/>
+      <stop offset="1" stop-color="#8CF0B4"/>
+    </linearGradient>
+  </defs>
+  <path d="M75.67 50.18A22 22 0 1 1 57.82 32.33" fill="none" stroke="url(#ring)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M54 54L63.2 44.8" fill="none" stroke="#8CF0B4" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="54" cy="54" r="5.5" fill="#E6EAF0"/>
+</svg>
