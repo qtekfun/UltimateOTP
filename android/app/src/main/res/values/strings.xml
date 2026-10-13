@@ -5,7 +5,10 @@
     <string name="app_name" translatable="false">UltimateOTP</string>
     <string name="welcome_title">Your codes, on your devices</string>
     <string name="welcome_body">Codes are stored encrypted on this phone and work without a network. Sync with your own server is optional.</string>
-    <string name="welcome_create">Create vault</string>
+    <string name="welcome_signup">Create account</string>
+    <string name="welcome_login">Log in</string>
+    <string name="welcome_offline">Use without a server</string>
+    <string name="welcome_advanced">Advanced: enrollment token or pairing</string>
     <string name="locked_title">Vault locked</string>
     <string name="unlock">Unlock</string>
     <string name="unlock_title">Unlock UltimateOTP</string>
@@ -134,4 +137,26 @@
     <string name="current_password">Current password</string>
     <string name="or_recovery_words">…or the 24 recovery words</string>
     <string name="new_password">New password (at least 8 characters)</string>
+    <string name="advanced_token">Advanced: enrollment token from the server\'s CLI</string>
+    <string name="next">Next</string>
+    <string name="signup_title">Create account</string>
+    <string name="signup_intro">Your account lives on your own UltimateOTP server, which must have sign-up enabled. The codes already on this phone become the account\'s first entries.</string>
+    <string name="signup_have_account">I already have an account: log in</string>
+    <string name="signup_password_warning">This password encrypts everything. The server never sees it and cannot reset it: if you forget it, only the recovery key gets your codes back.</string>
+    <string name="password_mismatch">The passwords do not match.</string>
+    <string name="strength_too_short">Too short: at least 8 characters.</string>
+    <string name="strength_weak">Weak: easy to guess. Make it longer, or use a few unrelated words.</string>
+    <string name="strength_fair">Fair. Longer is better.</string>
+    <string name="strength_strong">Strong.</string>
+    <string name="signup_recovery_confirm">I saved these 24 words somewhere safe. Without them, a forgotten password means losing the synced codes.</string>
+    <string name="signup_create">Create my account</string>
+    <string name="signup_done">Account created. This phone now syncs with it; log in on other devices with your email and password.</string>
+    <string name="signup_other_server">Use another server or email</string>
+    <string name="signup_start_over">Start over</string>
+    <string name="problem_signup_disabled">Sign-up is closed on this server. Log in with an existing account, or ask the owner to open sign-up.</string>
+    <string name="problem_email_taken">This email already has an account. Log in instead.</string>
+    <string name="problem_locked">Too many wrong passwords: the account is locked. Try again in %1$s.</string>
+    <string name="problem_locked_later">Too many wrong passwords: the account is locked for a while. Try again later.</string>
+    <string name="problem_rate_limited">Too many attempts. Try again in %1$s.</string>
+    <string name="problem_rate_limited_later">Too many attempts. Try again later.</string>
 </resources>
