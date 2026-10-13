@@ -12,6 +12,10 @@ import kotlinx.serialization.Serializable
 data class ServerInfo(
     @SerialName("api_version") val apiVersion: String,
     @SerialName("server_time") val serverTime: Long,
+    /** Since 1.2.0: how long previous versions are kept; 0 means history is off. */
+    @SerialName("history_retention_days") val historyRetentionDays: Int? = null,
+    /** Since 1.2.0: the languages of the server's emails. */
+    val languages: List<String> = emptyList(),
 )
 
 @Serializable
@@ -237,6 +241,11 @@ data class Item(
 data class VaultChanges(
     val head: VaultHead,
     val items: List<Item>,
+    /**
+     * Since 1.2.0: true when [items] is the complete live set, so a local item that is missing
+     * from it no longer exists on the server (its tombstone may have been compacted).
+     */
+    val full: Boolean = false,
 )
 
 @Serializable
@@ -350,4 +359,148 @@ data class SessionInfo(
 @Serializable
 data class SessionList(
     val sessions: List<SessionInfo>,
+)
+
+// ---- contract 1.2.0: vault history and trash, account management --------------------------------
+
+/** One committed vault version the server still holds (`GET /vault/history`). */
+@Serializable
+data class HistoryVersion(
+    val version: Long,
+    @SerialName("key_epoch") val keyEpoch: Long,
+    val kind: String,
+    @SerialName("signed_by") val signedBy: String,
+    val signature: String,
+    @SerialName("committed_at") val committedAt: Long,
+    val upserted: List<String> = emptyList(),
+    val deleted: List<String> = emptyList(),
+)
+
+@Serializable
+data class VaultHistory(
+    @SerialName("retention_days") val retentionDays: Int,
+    @SerialName("current_version") val currentVersion: Long,
+    val versions: List<HistoryVersion>,
+    @SerialName("next_before") val nextBefore: Long? = null,
+)
+
+/** An item as it was at a past version; [version] is part of its authenticated data. */
+@Serializable
+data class HistoricItem(
+    @SerialName("item_id") val itemId: String,
+    val version: Long,
+    val blob: String,
+)
+
+@Serializable
+data class HistoricHead(
+    @SerialName("account_id") val accountId: String,
+    val version: Long,
+    @SerialName("key_epoch") val keyEpoch: Long,
+    @SerialName("signed_by") val signedBy: String,
+    val signature: String,
+    @SerialName("updated_at") val updatedAt: Long,
+)
+
+@Serializable
+data class HistoricVault(
+    val head: HistoricHead,
+    val complete: Boolean,
+    val items: List<HistoricItem>,
+)
+
+/** An entry deleted within the retention window, with its last blob (`GET /vault/trash`). */
+@Serializable
+data class TrashItem(
+    @SerialName("item_id") val itemId: String,
+    val version: Long,
+    val blob: String,
+    @SerialName("key_epoch") val keyEpoch: Long,
+    @SerialName("deleted_in_version") val deletedInVersion: Long,
+    @SerialName("deleted_at") val deletedAt: Long,
+)
+
+@Serializable
+data class VaultTrash(
+    @SerialName("retention_days") val retentionDays: Int,
+    val items: List<TrashItem>,
+)
+
+@Serializable
+data class ReauthSrpRequest(
+    @SerialName("srp_a") val srpA: String,
+)
+
+@Serializable
+data class ReauthSrpSession(
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("srp_b") val srpB: String,
+    @SerialName("srp_user_id") val srpUserId: String,
+    @SerialName("srp_salt") val srpSalt: String,
+    @SerialName("password_kdf") val passwordKdf: String,
+)
+
+@Serializable
+data class ReauthSrpProof(
+    @SerialName("session_id") val sessionId: String,
+    @SerialName("srp_m1") val srpM1: String,
+)
+
+/** A fresh proof for a dangerous action: exactly one of the emailed code or the SRP proof. */
+@Serializable
+data class Reauth(
+    @SerialName("email_code") val emailCode: String? = null,
+    val srp: ReauthSrpProof? = null,
+)
+
+@Serializable
+data class DeleteAccountRequest(
+    val reauth: Reauth,
+)
+
+@Serializable
+data class RemovedCounts(
+    val devices: Int = 0,
+    val items: Int = 0,
+    @SerialName("history_versions") val historyVersions: Int = 0,
+    @SerialName("history_items") val historyItems: Int = 0,
+)
+
+@Serializable
+data class AccountDeleted(
+    val status: String,
+    @SerialName("account_id") val accountId: String,
+    @SerialName("deleted_at") val deletedAt: Long,
+    val removed: RemovedCounts,
+)
+
+@Serializable
+data class ChangeEmailRequest(
+    @SerialName("new_email") val newEmail: String,
+    val lang: String? = null,
+    val reauth: Reauth,
+)
+
+@Serializable
+data class EmailChangePending(
+    val status: String,
+    @SerialName("expires_at") val expiresAt: Long,
+)
+
+@Serializable
+data class ConfirmEmailRequest(
+    val code: String,
+)
+
+@Serializable
+data class AccountEmail(
+    @SerialName("account_id") val accountId: String,
+    val email: String,
+)
+
+@Serializable
+data class RevokeOthersResult(
+    val revoked: List<String>,
+    @SerialName("devices_revision") val devicesRevision: Long,
+    @SerialName("rotation_required") val rotationRequired: Boolean,
 )

@@ -1,0 +1,5 @@
+Subject: UltimateOTP: se ha cambiado tu correo electrónico
+
+El correo electrónico de tu cuenta de UltimateOTP es ahora $new_email. A partir de ahora los códigos de acceso y los avisos llegarán allí.
+
+Si no has sido tú, cierra en "Sesiones activas" los dispositivos que no reconozcas y cambia tu contraseña.

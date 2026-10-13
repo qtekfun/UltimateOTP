@@ -1,0 +1,5 @@
+Subject: UltimateOTP: se cerró la sesión de otros dispositivos
+
+Se ha cerrado la sesión de $count dispositivo(s) de tu cuenta de UltimateOTP desde "$device". Sus sesiones dejan de funcionar al instante y se renovará la clave de la caja fuerte.
+
+Si no has sido tú, cambia tu contraseña y vuelve a iniciar sesión en tus propios dispositivos.

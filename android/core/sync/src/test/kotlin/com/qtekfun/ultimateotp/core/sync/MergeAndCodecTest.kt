@@ -56,14 +56,14 @@ class MergeAndCodecTest {
     fun `newer edit wins and the other is kept as a conflict copy`() {
         val local = item(label = "local", updated = 5)
         val remote = item(label = "remote", updated = 3)
-        val r = Merge.resolve(local, remote) { UUID(0, 1) }
+        val r = Merge.resolve(local, remote, newId = { UUID(0, 1) })
         assertEquals("local", r.item!!.otp.label)
         assertTrue(r.dirty)
         val copy = assertNotNull(r.conflictCopy).let { r.conflictCopy!! }
         assertEquals("remote", copy.otp.label)
         assertTrue(Merge.CONFLICT_TAG in copy.otp.tags)
 
-        val older = Merge.resolve(item(label = "local", updated = 1), remote) { UUID(0, 2) }
+        val older = Merge.resolve(item(label = "local", updated = 1), remote, newId = { UUID(0, 2) })
         assertEquals("remote", older.item!!.otp.label)
         assertFalse(older.dirty)
     }

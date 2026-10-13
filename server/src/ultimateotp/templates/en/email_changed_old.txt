@@ -1,0 +1,5 @@
+Subject: UltimateOTP: your email address was changed
+
+The email address of your UltimateOTP account is now $new_email. Login codes and notices go there from now on.
+
+If this was not you, sign out the devices you do not recognize in "Active sessions" and change your password.
