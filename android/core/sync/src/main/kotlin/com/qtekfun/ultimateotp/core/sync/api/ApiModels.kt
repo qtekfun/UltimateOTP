@@ -88,6 +88,7 @@ data class PutKeysRequest(
     @SerialName("password_wrap") val passwordWrap: String? = null,
     @SerialName("password_kdf") val passwordKdf: String? = null,
     @SerialName("recovery_wrap") val recoveryWrap: String,
+    val srp: SrpSetupDto? = null,
 )
 
 @Serializable
@@ -102,6 +103,7 @@ data class Device(
     @SerialName("created_at") val createdAt: Long,
     @SerialName("last_seen_at") val lastSeenAt: Long? = null,
     @SerialName("revoked_at") val revokedAt: Long? = null,
+    @SerialName("app_version") val appVersion: String? = null,
 )
 
 @Serializable

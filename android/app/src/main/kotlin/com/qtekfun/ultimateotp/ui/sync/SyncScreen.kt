@@ -43,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.google.zxing.BarcodeFormat
@@ -52,12 +53,21 @@ import com.qtekfun.ultimateotp.core.sync.EnrollLink
 import com.qtekfun.ultimateotp.core.sync.SyncResult
 import com.qtekfun.ultimateotp.ui.add.QrScanner
 import com.qtekfun.ultimateotp.ui.settings.PasswordDialog
+import java.text.DateFormat
+import java.util.Date
 
 private const val QR_PIXELS = 512
 private const val BLACK = 0xFF000000.toInt()
 private const val WHITE = 0xFFFFFFFF.toInt()
 private const val MAX_LABEL = 64
 private const val WORDS_PER_LINE = 3
+private const val EMAIL_CODE_LENGTH = 6
+private const val MILLIS = 1000L
+
+private fun formatTime(unixSeconds: Long): String =
+    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(
+        Date(unixSeconds * MILLIS),
+    )
 
 /** A QR code drawn with ZXing core. */
 @Composable
@@ -229,6 +239,7 @@ private fun doneText(kind: SyncStep.DoneKind): Int =
         SyncStep.DoneKind.PAIRING_DECLINED -> R.string.done_declined
         SyncStep.DoneKind.ROTATED -> R.string.done_rotated
         SyncStep.DoneKind.UPLOADED -> R.string.done_uploaded
+        SyncStep.DoneKind.PASSWORD_CHANGED -> R.string.done_password
     }
 
 private enum class Ask { NEW_ACCOUNT, PASSWORD, RECOVERY }
@@ -248,6 +259,7 @@ private fun NoAccount(
     var lan by remember(settings.enrollmentUrl) { mutableStateOf(settings.enrollmentUrl) }
     var remote by remember(settings.allowRemoteEnrollment) { mutableStateOf(settings.allowRemoteEnrollment) }
     var token by remember(link) { mutableStateOf(link?.token.orEmpty()) }
+    var emailCode by remember { mutableStateOf("") }
     var ask by remember { mutableStateOf<Ask?>(null) }
 
     Text(stringResource(R.string.sync_intro))
@@ -276,6 +288,12 @@ private fun NoAccount(
         label = { Text(stringResource(R.string.enrollment_token)) },
         modifier = Modifier.fillMaxWidth(),
     )
+    OutlinedTextField(
+        emailCode,
+        { emailCode = it.filter(Char::isDigit).take(EMAIL_CODE_LENGTH) },
+        label = { Text(stringResource(R.string.bootstrap_email_code)) },
+        modifier = Modifier.fillMaxWidth(),
+    )
     val ready = server.isNotBlank() && token.isNotBlank()
     val choose = { next: Ask ->
         model.saveServer(server, lan, remote)
@@ -294,7 +312,7 @@ private fun NoAccount(
         Ask.NEW_ACCOUNT -> {
             PasswordDialog(stringResource(R.string.new_password_title), confirm = true, onDismiss = { ask = null }) {
                 ask = null
-                model.bootstrap(server, token, it, label)
+                model.bootstrap(server, token, it, label, emailCode)
             }
         }
 
@@ -368,6 +386,7 @@ private fun WithAccount(
     HorizontalDivider()
     Sessions(model, account.devicesRevision)
     HorizontalDivider()
+    ChangePassword(model)
     OutlinedButton(onClick = { upload = true }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.upload_local)) }
     if (rotate) {
         PasswordDialog(stringResource(R.string.rotate), confirm = false, onDismiss = { rotate = false }) {
@@ -397,12 +416,24 @@ private fun Sessions(
     devicesRevision: Long,
 ) {
     val devices by model.devices.collectAsState()
+    val sessions by model.sessions.collectAsState()
     LaunchedEffect(devicesRevision) { model.loadDevices() }
     Text(stringResource(R.string.sessions_title), style = MaterialTheme.typography.titleMedium)
     devices.forEach { d ->
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp)) {
                 Text(if (d.isThisDevice) stringResource(R.string.this_device, d.label) else d.label)
+                sessions[d.deviceId]?.let { info ->
+                    Text(
+                        stringResource(
+                            R.string.session_meta,
+                            info.appVersion ?: "?",
+                            info.lastSeenAt?.let(::formatTime) ?: "?",
+                            info.lastIp ?: "?",
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 when {
                     d.revoked -> Text(stringResource(R.string.device_revoked))
                     !d.trusted -> Text(stringResource(R.string.device_untrusted), color = MaterialTheme.colorScheme.error)
@@ -419,3 +450,52 @@ private fun Sessions(
         }
     }
 }
+
+/** New master password, proved by the current one or by the 24 recovery words (after recovery). */
+@Composable
+private fun ChangePassword(model: SyncViewModel) {
+    var open by remember { mutableStateOf(false) }
+    OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.change_password)) }
+    if (!open) return
+    var current by remember { mutableStateOf("") }
+    var words by remember { mutableStateOf("") }
+    var next by remember { mutableStateOf("") }
+    var repeat by remember { mutableStateOf("") }
+    val ok = next.length >= MIN_NEW_PASSWORD && next == repeat && (current.isNotEmpty() || words.isNotBlank())
+    AlertDialog(
+        onDismissRequest = { open = false },
+        title = { Text(stringResource(R.string.change_password)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    current,
+                    { current = it },
+                    label = { Text(stringResource(R.string.current_password)) },
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                OutlinedTextField(words, { words = it }, label = { Text(stringResource(R.string.or_recovery_words)) }, minLines = 2)
+                OutlinedTextField(
+                    next,
+                    { next = it },
+                    label = { Text(stringResource(R.string.new_password)) },
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                OutlinedTextField(
+                    repeat,
+                    { repeat = it },
+                    label = { Text(stringResource(R.string.password_repeat)) },
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = ok, onClick = {
+                open = false
+                model.changePassword(next, current, words)
+            }) { Text(stringResource(R.string.ok)) }
+        },
+        dismissButton = { TextButton(onClick = { open = false }) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
+private const val MIN_NEW_PASSWORD = 8

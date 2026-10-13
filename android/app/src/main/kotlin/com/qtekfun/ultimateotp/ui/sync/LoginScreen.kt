@@ -112,7 +112,7 @@ class LoginViewModel
             email: String,
         ) = go({
             val (ticket, resendAt) = login.requestCode(server.trim(), email.trim().lowercase())
-            LoginStep.Code(ticket, resendAt)
+            if (ticket.codeRequired) LoginStep.Code(ticket, resendAt) else LoginStep.Password(login.verifyCode(ticket, ""))
         })
 
         fun resend(step: LoginStep.Code) = sendCode(step.ticket.server, step.ticket.email)

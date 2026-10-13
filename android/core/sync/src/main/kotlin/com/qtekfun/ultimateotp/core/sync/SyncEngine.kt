@@ -27,6 +27,7 @@ import com.qtekfun.ultimateotp.core.sync.api.JoinRequest
 import com.qtekfun.ultimateotp.core.sync.api.KeyBundleDto
 import com.qtekfun.ultimateotp.core.sync.api.NewDevice
 import com.qtekfun.ultimateotp.core.sync.api.PairingDevice
+import com.qtekfun.ultimateotp.core.sync.api.PutKeysRequest
 import com.qtekfun.ultimateotp.core.sync.api.RotateRequest
 import com.qtekfun.ultimateotp.core.sync.api.SessionInfo
 import com.qtekfun.ultimateotp.core.sync.api.Signer
@@ -112,6 +113,7 @@ class SyncEngine(
         token: String,
         password: String?,
         label: String,
+        emailCode: String? = null,
     ): List<String> =
         mutex.withLock {
             val api = apiFor(serverUrl)
@@ -122,11 +124,27 @@ class SyncEngine(
             val derived = password?.let { PasswordKdf.deriveNew(it, kdfLadder()) }
             try {
                 val bundle = VaultKeyWraps.bundle(vk, FIRST_EPOCH, kekRk, derived?.second, derived?.first)
+                // The SRP login record (crypto-format.md §4.4) goes with the password wraps.
+                val srp =
+                    derived
+                        ?.second
+                        ?.let { kek ->
+                            Srp.setup(kek)
+                        }?.let { SrpSetupDto(it.srpUserId, B64u.encode(it.salt), B64u.encode(it.verifier)) }
+                val request =
+                    EnrollRequest(
+                        keys.ed25519PublicB64u,
+                        keys.x25519PublicB64u,
+                        label,
+                        bundle.toDto().copy(srp = srp),
+                        api.appVersion,
+                        emailCode,
+                    )
                 val response =
                     api.enroll(
                         token,
                         Signer(keys, UotpApi.PENDING),
-                        EnrollRequest(keys.ed25519PublicB64u, keys.x25519PublicB64u, label, bundle.toDto()),
+                        request,
                     )
                 store.saveDeviceKeys(keys)
                 val account =
@@ -278,6 +296,46 @@ class SyncEngine(
             vk.wipe()
         } finally {
             kek.wipe()
+        }
+    }
+
+    /**
+     * Sets a new master password (`PUT /otp/v1/account/keys`): new kind 1 and 3 wraps and a new SRP
+     * record. Proves knowledge of the account with the current password or the 24 recovery words
+     * (the path after recovering with the recovery key).
+     */
+    suspend fun changePassword(
+        newPassword: String,
+        currentPassword: String?,
+        recoveryWords: String?,
+    ) = mutex.withLock {
+        val account = requireAccount()
+        val api = api(account)
+        val keys = api.accountKeys(signer(account))
+        val (oldKek, _, kekRk) = rotationKeks(keys, currentPassword, recoveryWords)
+        oldKek?.wipe()
+        val (params, kek) = PasswordKdf.deriveNew(newPassword, kdfLadder())
+        val vk = store.vaultKey()
+        try {
+            val bundle = VaultKeyWraps.bundle(vk, account.keyEpoch, kekRk, kek, params)
+            val srp = Srp.setup(kek)
+            val updated =
+                api.putAccountKeys(
+                    signer(account),
+                    PutKeysRequest(
+                        baseRevision = keys.keysRevision,
+                        keyEpoch = keys.keyEpoch,
+                        passwordWrap = bundle.passwordWrap,
+                        passwordKdf = bundle.passwordKdf,
+                        recoveryWrap = bundle.recoveryWrap,
+                        srp = SrpSetupDto(srp.srpUserId, B64u.encode(srp.salt), B64u.encode(srp.verifier)),
+                    ),
+                )
+            store.apply(emptyList(), emptyList(), account.copy(keysRevision = updated.keysRevision))
+        } finally {
+            vk.wipe()
+            kek.wipe()
+            kekRk.wipe()
         }
     }
 

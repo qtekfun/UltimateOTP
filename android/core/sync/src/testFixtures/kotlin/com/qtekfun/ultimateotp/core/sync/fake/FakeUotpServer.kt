@@ -28,6 +28,7 @@ import com.qtekfun.ultimateotp.core.sync.api.PairingCreated
 import com.qtekfun.ultimateotp.core.sync.api.PairingDevice
 import com.qtekfun.ultimateotp.core.sync.api.PairingResult
 import com.qtekfun.ultimateotp.core.sync.api.Problem
+import com.qtekfun.ultimateotp.core.sync.api.PutKeysRequest
 import com.qtekfun.ultimateotp.core.sync.api.RecoveryKeys
 import com.qtekfun.ultimateotp.core.sync.api.RotateRequest
 import com.qtekfun.ultimateotp.core.sync.api.SealedVaultKeyDto
@@ -201,8 +202,33 @@ class FakeUotpServer : AutoCloseable {
                 ok(EnrollmentToken.serializer(), EnrollmentToken(issueToken(), now + TEN_MIN), CREATED)
             }
 
+            path == "/otp/v1/account/keys" && r.method == "PUT" -> {
+                putKeys(r)
+            }
+
             path == "/otp/v1/account/keys" -> {
                 accountKeys(r)
+            }
+
+            path == "/otp/v1/srp/attributes" -> {
+                srpAttributes(r)
+            }
+
+            path == "/otp/v1/login/email-code" -> {
+                if (body(r, EmailRequest.serializer()).email == email) lastEmailCode = (100_000 + ++counter).toString()
+                ok(Accepted.serializer(), Accepted(), ACCEPTED)
+            }
+
+            path == "/otp/v1/srp/session" -> {
+                srpSession(r)
+            }
+
+            path == "/otp/v1/srp/verify" -> {
+                srpVerify(r)
+            }
+
+            path == "/otp/v1/sessions" -> {
+                sessions(r)
             }
 
             path == "/otp/v1/devices" -> {
@@ -338,6 +364,40 @@ class FakeUotpServer : AutoCloseable {
         return ok(
             AccountKeys.serializer(),
             AccountKeys(accountId, keyEpoch, keysRevision, b.passwordWrap, b.passwordKdf, b.recoveryWrap, mine),
+        )
+    }
+
+    private fun sessions(r: RecordedRequest): MockResponse {
+        val me = device(r)
+        val list =
+            devices.values.map {
+                SessionInfo(
+                    it.deviceId,
+                    it.label,
+                    it.appVersion,
+                    it.enrolledVia,
+                    it.createdAt,
+                    now,
+                    "192.0.2.1",
+                    it.revokedAt,
+                    it.deviceId == me.deviceId,
+                )
+            }
+        return ok(SessionList.serializer(), SessionList(list))
+    }
+
+    private fun putKeys(r: RecordedRequest): MockResponse {
+        device(r)
+        val req = body(r, PutKeysRequest.serializer())
+        if (req.baseRevision != keysRevision) fail(CONFLICT, "keys_revision_conflict")
+        if (req.keyEpoch != keyEpoch) fail(CONFLICT, "key_epoch_conflict")
+        val previous = bundle
+        val srp = if (req.passwordWrap == null) null else req.srp ?: previous?.srp
+        bundle = KeyBundleDto(req.passwordWrap, req.passwordKdf, req.recoveryWrap, srp)
+        keysRevision++
+        return ok(
+            AccountKeys.serializer(),
+            AccountKeys(accountId, keyEpoch, keysRevision, req.passwordWrap, req.passwordKdf, req.recoveryWrap, null),
         )
     }
 
