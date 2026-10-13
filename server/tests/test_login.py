@@ -90,6 +90,17 @@ def test_wrong_password_and_single_use_sessions(server: Server, owner: Bootstrap
         assert right.json()["code"] == "srp_failed"
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="KNOWN BUG KB-2: the SRP session is consumed before the request timestamp is checked, "
+    "so the client's retry after stale_request meets srp_failed (docs/testing.md)",
+)
+def test_password_login_survives_a_stale_clock_retry(server: Server, owner: Bootstrapped) -> None:
+    with server.client(PUBLIC_CLIENT) as internet:
+        response = Device(internet).srp_login(EMAIL, PASSWORD, stale_first=True)
+        assert response.status_code == 201, response.text
+
+
 def test_lockout_is_exponential(
     make_settings: Callable[..., Settings],
     make_server: Callable[[Settings], Server],
