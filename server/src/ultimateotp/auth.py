@@ -8,8 +8,9 @@ import re
 from fastapi import Request
 from starlette.concurrency import run_in_threadpool
 
+from ultimateotp.anon import context_of
 from ultimateotp.errors import ApiError
-from ultimateotp.forwarded import client_host, from_networks
+from ultimateotp.forwarded import from_networks
 from ultimateotp.ratelimit import RateLimiter
 from ultimateotp.service import DeviceAuth, Service, SignedRequest
 from ultimateotp.settings import Settings
@@ -26,15 +27,15 @@ def limiter_of(request: Request) -> RateLimiter:
 
 
 def client_key(request: Request) -> str:
-    return client_host(request.scope) or "unknown"
+    """The caller's anonymized client id: the only form of its address the server keeps, so also
+    the key of every per-client rate limit."""
+    return context_of(request.scope).client_id
 
 
 def rate_limit(request: Request, bucket: str, key: str) -> None:
     retry = limiter_of(request).hit(bucket, key)
     if retry is not None:
-        service_of(request).event(
-            "ratelimit.hit", level=logging.WARNING, bucket=bucket, client_ip=client_key(request)
-        )
+        service_of(request).event("ratelimit.hit", level=logging.WARNING, bucket=bucket)
         raise ApiError(429, "rate_limited", retry_after=max(1, int(retry + 0.999)))
 
 
@@ -60,18 +61,20 @@ async def signed_request(request: Request) -> SignedRequest:
         nonce=headers.get("x-uotp-nonce"),
         signature=headers.get("x-uotp-signature"),
         body=await request.body(),
-        client_ip=client_host(request.scope),
+        client_id=client_key(request),
         app_version=app_version if app_version and _APP_VERSION.match(app_version) else None,
     )
 
 
 def auth_failed(request: Request, error: ApiError) -> ApiError:
-    """Logs the failure and turns it into 429 when this client fails too often."""
+    """Logs the failure and turns it into 429 when this client fails too often. A stale
+    timestamp is a clock problem the client corrects and retries: not counted."""
+    if error.code == "stale_request":
+        return error
     service_of(request).event(
         "auth.failure",
         level=logging.WARNING,
         reason=error.code,
-        client_ip=client_key(request),
         path=request.url.path,
     )
     retry = limiter_of(request).hit("auth_failure", client_key(request))
@@ -103,7 +106,6 @@ def _scope_gate(request: Request, scope: str, setting: str) -> None:
         service_of(request).event(
             "enroll.denied_network",
             level=logging.WARNING,
-            client_ip=client_key(request),
             path=request.url.path,
             setting=setting,
         )
