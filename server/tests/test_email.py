@@ -5,64 +5,18 @@ smtp.resend.com:587, requires STARTTLS before AUTH. Nothing is ever sent to Rese
 
 import secrets
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from contextlib import closing
-from dataclasses import dataclass
-from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from tests.client import Device, Vault
-from tests.conftest import PASSWORD, PUBLIC_CLIENT, Bootstrapped, FakeClock, Server
-from tests.fakes import SMTP_PASSWORD, SMTP_USER, Mailbox, smtp_relay
+from tests.conftest import PASSWORD, PUBLIC_CLIENT, Bootstrapped, FakeClock, Mail
+from tests.fakes import SMTP_PASSWORD, SMTP_USER, Mailbox, free_port
 from ultimateotp import b64
 from ultimateotp.settings import Settings
 
 EMAIL = "owner@example.org"
-
-
-@dataclass
-class Mail:
-    server: Server
-    box: Mailbox
-
-    def flush(self) -> None:
-        assert self.server.service.alerts.flush()
-
-
-@pytest.fixture
-def make_mail(
-    tmp_path: Path,
-    make_settings: Callable[..., Settings],
-    make_server: Callable[[Settings], Server],
-) -> Iterator[Callable[..., Mail]]:
-    relays = []
-
-    def make(**overrides: object) -> Mail:
-        manager = smtp_relay(tmp_path)
-        box, port, cert = manager.__enter__()
-        relays.append(manager)
-        settings = make_settings(
-            email_verification="enabled",
-            smtp_host="127.0.0.1",
-            smtp_port=port,
-            smtp_user=SMTP_USER,
-            smtp_from="UltimateOTP <otp@example.org>",
-            smtp_password=SMTP_PASSWORD,
-            smtp_ca_file=cert,
-            **overrides,
-        )
-        return Mail(make_server(settings), box)
-
-    yield make
-    for manager in relays:
-        manager.__exit__(None, None, None)
-
-
-@pytest.fixture
-def mail(make_mail: Callable[..., Mail]) -> Mail:
-    return make_mail()
 
 
 def _bootstrap(mail: Mail, client: TestClient) -> Bootstrapped:
@@ -225,7 +179,6 @@ def test_no_starttls_no_credentials(make_settings: Callable[..., Settings]) -> N
     """A relay that does not offer STARTTLS gets neither the API key nor the message."""
     from aiosmtpd.controller import Controller  # noqa: PLC0415
 
-    from tests.fakes import free_port  # noqa: PLC0415
     from ultimateotp.alerts import Alerts  # noqa: PLC0415
 
     box = Mailbox()

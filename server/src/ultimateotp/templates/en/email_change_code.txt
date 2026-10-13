@@ -1,0 +1,7 @@
+Subject: Confirm your new email address for UltimateOTP
+
+Your UltimateOTP confirmation code is $code.
+
+Enter it in the app to make this address the login address of your account. It expires in $minutes minutes and works once.
+
+If you did not ask for this, ignore this message: nothing changes until the code is entered.

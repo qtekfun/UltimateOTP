@@ -1,0 +1,5 @@
+Subject: UltimateOTP: tu cuenta ha sido eliminada
+
+Tu cuenta de UltimateOTP y todo lo que había guardado para ella en el servidor (dispositivos, caja fuerte cifrada, historial) se ha eliminado ahora mismo. No se puede deshacer.
+
+Si no has sido tú, lo ha hecho alguien con acceso a uno de tus dispositivos y a este buzón o a tu contraseña. Las copias de tus dispositivos no se ven afectadas.

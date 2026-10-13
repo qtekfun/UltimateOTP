@@ -1,0 +1,72 @@
+# SPDX-FileCopyrightText: 2026 UltimateOTP contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Unit tests of alerts.yml:
+#   docker run --rm --entrypoint promtool -v "$PWD":/m:ro \
+#     quay.io/prometheus/prometheus:v3.15.0 test rules /m/alerts.test.yml
+
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'up{job="ultimateotp",instance="api:8047"}'
+        values: '1 1 1 0 0 0 0'
+      - series: 'uotp_logins_total{job="ultimateotp",result="srp_failure"}'
+        values: '0+3x20'
+      - series: 'uotp_blocks_total{job="ultimateotp"}'
+        values: '0 0 1 2 3 4 5 6 7 8 9 10'
+      - series: 'uotp_emails_total{job="ultimateotp",result="failed"}'
+        values: '0 0 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: UltimateOTPDown
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: UltimateOTPDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: ultimateotp
+              instance: "api:8047"
+            exp_annotations:
+              summary: The UltimateOTP server is down or not scraped
+              description: >-
+                Prometheus has not been able to scrape the server for 2 minutes (or the job does
+                not exist). Devices keep working offline; sync and logins are unavailable. Check
+                `docker compose ps` and `docker compose logs api` on the host, and /readyz.
+      - eval_time: 15m
+        alertname: UltimateOTPAuthFailuresSpike
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Many failed logins in 10 minutes
+              description: >-
+                30 wrong passwords, wrong email codes or locked-account hits in
+                10 minutes. Someone is guessing; the api blocks single clients on its own (see
+                UltimateOTPManyBlocks). Per-account lockouts: uotp_lockouts_total.
+      - eval_time: 11m
+        alertname: UltimateOTPManyBlocks
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Several clients were blocked in the last hour
+              description: >-
+                10 temporary blocks in 1 hour. List them with
+                `docker compose exec api ultimateotp blocks list`.
+      - eval_time: 19m
+        alertname: UltimateOTPEmailsFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: The server cannot deliver email
+              description: >-
+                15 messages failed in 15 minutes. Login codes are not
+                arriving: check the relay, the Resend API key secret and `docker compose logs api`
+                (`outbound Email failed`).

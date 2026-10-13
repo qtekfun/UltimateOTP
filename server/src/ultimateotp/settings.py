@@ -115,10 +115,55 @@ class Settings(BaseSettings):
     email_address_per_hour: float = Field(default=3.0, gt=0)
     email_address_burst: int = Field(default=3, ge=1)
 
+    # Per account: re-authentication codes, account deletion, email change (docs/deploy.md §7).
+    account_action_per_hour: float = Field(default=10.0, gt=0)
+    account_action_burst: int = Field(default=5, ge=1)
+    # Full exports per device.
+    export_per_hour: float = Field(default=6.0, gt=0)
+    export_burst: int = Field(default=3, ge=1)
+    # History and trash reads per device.
+    history_rate_per_s: float = Field(default=2.0, gt=0)
+    history_burst: int = Field(default=30, ge=1)
+
+    # --- Vault history (contract 1.2.0, docs/deploy.md §8) --------------------------------
+    # How long previous committed versions are kept. 0 turns the history (and the trash) off.
+    history_retention_days: int = Field(default=30, ge=0, le=3650)
+    # Per account: at most this many retained versions and this many bytes of previous blobs.
+    history_max_versions: int = Field(default=1000, ge=1, le=1_000_000)
+    history_max_bytes: int = Field(default=32 * 1024 * 1024, ge=1024 * 1024)
+    # Tombstones older than this are deleted from `items` (clients behind them get the full set).
+    # 0 keeps them forever (the 1.1.0 behaviour).
+    tombstone_retention_days: int = Field(default=0, ge=0, le=3650)
+    # Background maintenance (history pruning, tombstones, block table).
+    maintenance_interval_s: float = Field(default=3600.0, gt=0)
+
+    # --- Anonymized client addresses and temporary blocks (docs/deploy.md §6) --------------
+    # Optional Docker secret `uotp_ip_secret` (32+ random characters). Without it the server makes
+    # one and keeps it in the database. Never logged either way.
+    ip_secret: SecretStr | None = None
+    block_enabled: bool = True
+    # Failed or abusive attempts of one client within `block_window_s` that trigger a block.
+    block_threshold: int = Field(default=20, ge=1, le=10_000)
+    block_window_s: int = Field(default=600, ge=10, le=86_400)
+    # Block lengths for the 1st, 2nd, 3rd... block of a client (the last one repeats).
+    block_durations_s: str = "900,3600,86400"
+    # A client quiet this long after its block ended starts again at the first length.
+    block_decay_s: int = Field(default=86_400, ge=60, le=30 * 86_400)
+    # Keep active blocks in SQLite so a restart does not wipe them.
+    block_persist: bool = True
+
     # --- Listener -------------------------------------------------------------------------
     limit_concurrency: int = Field(default=256, ge=8, le=10_000)
     keepalive_timeout_s: int = Field(default=5, ge=1, le=120)
     shutdown_timeout_s: int = Field(default=5, ge=1, le=60)
+
+    @field_validator("block_durations_s")
+    @classmethod
+    def _valid_durations(cls, value: str) -> str:
+        parts = [part.strip() for part in value.split(",") if part.strip()]
+        if not parts or not all(part.isdigit() and 1 <= int(part) <= 30 * 86_400 for part in parts):
+            raise ValueError("UOTP_BLOCK_DURATIONS_S: comma-separated seconds, 1 to 2592000 each")
+        return value
 
     @field_validator("trusted_proxies", "lan_networks", "denied_networks", "metrics_networks")
     @classmethod
@@ -142,6 +187,10 @@ class Settings(BaseSettings):
         if self.ntfy_url and not self.ntfy_url.startswith(("https://", "http://")):
             raise ValueError("UOTP_NTFY_URL must be an http(s) URL")
         return self
+
+    @property
+    def block_duration_list(self) -> tuple[int, ...]:
+        return tuple(int(part) for part in self.block_durations_s.split(",") if part.strip())
 
     @property
     def email_enabled(self) -> bool:

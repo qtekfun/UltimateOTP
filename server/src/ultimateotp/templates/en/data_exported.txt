@@ -1,0 +1,5 @@
+Subject: UltimateOTP: your account data was exported
+
+The encrypted data of your UltimateOTP account was exported from "$device". The file is useless without your password or recovery key.
+
+If this was not you, sign out the devices you do not recognize in "Active sessions" and change your password.
