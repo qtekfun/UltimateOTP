@@ -47,8 +47,6 @@
     <string name="cancel">Cancel</string>
     <string name="ok">OK</string>
     <string name="section_security">Security</string>
-    <string name="lock_timeout">Locks after %1$d s in the background</string>
-    <string name="lock_after">Lock after %1$d s</string>
     <string name="section_backup">Backup</string>
     <string name="export_encrypted">Encrypted export (.uotp)</string>
     <string name="export_plain">Plain export (otpauth list)</string>
