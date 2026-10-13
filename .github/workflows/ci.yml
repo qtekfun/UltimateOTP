@@ -14,9 +14,11 @@
 #   gitleaks      secrets in the history
 name: CI
 
+# A branch with an open PR runs once, as the PR; `push` covers master (and tags are the release
+# workflow's business).
 on:
   push:
-    branches: ["**"]
+    branches: [master]
   pull_request:
 
 permissions:
