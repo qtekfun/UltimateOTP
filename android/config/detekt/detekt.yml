@@ -24,11 +24,14 @@ complexity:
     thresholdInFiles: 25
     thresholdInClasses: 25
     thresholdInObjects: 25
+    thresholdInInterfaces: 25
   LongParameterList:
     # Composables expose many optional parameters with defaults; the contract's canonical request
     # has six fields and is built in one call.
     ignoreDefaultParameters: true
     functionThreshold: 7
+    # Room entities and their row models mirror the table columns one to one.
+    constructorThreshold: 8
 
 style:
   MaxLineLength:

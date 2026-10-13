@@ -92,7 +92,7 @@ class CryptoVectorsTest {
         assertArrayEquals(i.hex("k_item_hex"), itemKey)
         val binding = ItemBinding(i.str("account_id"), UUID.fromString(i.str("item_id")), 3, 1)
         assertArrayEquals(i.hex("ad_hex"), binding.ad())
-        assertArrayEquals(i.hex("local_ad_hex"), binding.copy(accountId = "", itemVersion = 1).ad())
+        assertArrayEquals(i.hex("local_ad_hex"), binding.copy(accountId = "", itemVersion = 0).ad())
         val blob = ItemCipher.encrypt(itemKey, binding, i.str("plaintext").toByteArray(), i.hex("nonce_hex"))
         assertArrayEquals(i.hex("blob_hex"), blob)
         assertEquals(i.str("blob_b64u"), B64u.encode(blob))

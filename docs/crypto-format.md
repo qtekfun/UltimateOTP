@@ -317,8 +317,10 @@ AD   = "UOTP-ITEM-v1" || u8 len(account_id) || UTF8(account_id) || item_id[16]
   in the API).
 - `item_version`: the contract's item `version`, i.e. **the vault version of the commit that writes
   the item**. A commit always lands at `base_version + 1`, so the client encrypts with that value;
-  after a `409 version_conflict` it re-encrypts with the new one (cheap). Offline-only vaults use
-  `account_id = ""` and a local per-item counter.
+  after a `409 version_conflict` it re-encrypts with the new one (cheap).
+- Local, not yet committed changes are stored with `item_version = 0` ("pending") and
+  re-encrypted for the commit version when sent. An offline-only vault (no account) uses
+  `account_id = ""`, so all its items are pending; creating or joining an account commits them.
 - Binding `account_id`, `item_id`, `item_version` and `key_epoch` means the server can neither
   move a blob to another item or account nor present it under another version: decryption fails.
 - Blob size: 1 + 4 + 24 + padded + 16 bytes; at most 61 485 bytes (< 64 KiB, the contract limit).

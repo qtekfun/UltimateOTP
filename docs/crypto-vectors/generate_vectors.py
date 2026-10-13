@@ -174,7 +174,7 @@ def main() -> None:
     nonce = bytes([0x5A]) * 24
     ad = item_ad(account_id, item_uuid.bytes, 3, epoch)
     blob = bytes([1]) + u32(epoch) + nonce + aead(k_item, nonce, padded, ad)
-    local_ad = item_ad("", item_uuid.bytes, 1, epoch)
+    local_ad = item_ad("", item_uuid.bytes, 0, epoch)
     vectors["item"] = {"account_id": account_id, "item_id": str(item_uuid), "item_version": 3,
                        "key_epoch": epoch, "vk_hex": h(vk), "k_item_hex": h(k_item),
                        "plaintext": plaintext.decode(), "padded_len": len(padded),
