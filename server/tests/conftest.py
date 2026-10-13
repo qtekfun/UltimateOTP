@@ -46,6 +46,8 @@ def make_settings(tmp_path: Path) -> Callable[..., Settings]:
             "data_dir": tmp_path,
             "migrations_dir": MIGRATIONS,
             "ratelimit_enabled": False,
+            # Most tests run without SMTP; tests/test_email.py runs a fake relay.
+            "email_verification": "disabled",
             **overrides,
         }
         return Settings(**values)

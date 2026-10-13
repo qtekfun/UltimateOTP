@@ -50,7 +50,11 @@ def live(tmp_path: Any) -> Iterator[Callable[..., Live]]:
 
     def start(**overrides: Any) -> Live:
         # A short keepalive lets test readers notice they should stop (the default is 15 s).
-        values: dict[str, Any] = {"sse_keepalive_s": 0.2, **overrides}
+        values: dict[str, Any] = {
+            "sse_keepalive_s": 0.2,
+            "email_verification": "disabled",
+            **overrides,
+        }
         settings = Settings(
             data_dir=tmp_path, migrations_dir=MIGRATIONS, ratelimit_enabled=False, **values
         )

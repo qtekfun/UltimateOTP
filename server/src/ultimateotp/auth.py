@@ -3,6 +3,7 @@
 """FastAPI dependencies: device signatures, the LAN gate of the enrollment surface, rate limits."""
 
 import logging
+import re
 
 from fastapi import Request
 from starlette.concurrency import run_in_threadpool
@@ -45,8 +46,12 @@ def target_of(request: Request) -> str:
     return f"{target}?{query.decode('latin-1')}" if query else target
 
 
+_APP_VERSION = re.compile(r"^[\x21-\x7e]{1,64}$")
+
+
 async def signed_request(request: Request) -> SignedRequest:
     headers = request.headers
+    app_version = headers.get("x-uotp-app-version")
     return SignedRequest(
         method=request.method,
         target=target_of(request),
@@ -55,6 +60,8 @@ async def signed_request(request: Request) -> SignedRequest:
         nonce=headers.get("x-uotp-nonce"),
         signature=headers.get("x-uotp-signature"),
         body=await request.body(),
+        client_ip=client_host(request.scope),
+        app_version=app_version if app_version and _APP_VERSION.match(app_version) else None,
     )
 
 
@@ -88,11 +95,9 @@ def bearer(request: Request) -> str | None:
     return token.strip() if scheme.lower() == "bearer" and token.strip() else None
 
 
-def enrollment_gate(request: Request) -> None:
-    """The enrollment surface: LAN-only unless `UOTP_ENROLLMENT_SCOPE=anywhere`, rate-limited
-    per client either way (docs/decisions.md item 4)."""
+def _scope_gate(request: Request, scope: str, setting: str) -> None:
     settings: Settings = request.app.state.settings
-    if settings.enrollment_scope == "lan" and not from_networks(
+    if scope == "lan" and not from_networks(
         request.scope, settings.lan_network_list, settings.denied_network_list
     ):
         service_of(request).event(
@@ -100,6 +105,22 @@ def enrollment_gate(request: Request) -> None:
             level=logging.WARNING,
             client_ip=client_key(request),
             path=request.url.path,
+            setting=setting,
         )
-        raise ApiError(403, "enrollment_network_denied", "enrollment is allowed from the LAN only")
+        raise ApiError(403, "enrollment_network_denied", "this route is allowed from the LAN only")
+
+
+def pairing_gate(request: Request) -> None:
+    """Enrollment tokens and pairing: LAN-only unless `UOTP_PAIRING_SCOPE=anywhere`
+    (decision 6), rate-limited per client either way."""
+    settings: Settings = request.app.state.settings
+    _scope_gate(request, settings.pairing_scope, "UOTP_PAIRING_SCOPE")
     rate_limit(request, "enroll", client_key(request))
+
+
+def login_gate(request: Request) -> None:
+    """Password login (email code + SRP) and sign-up: anywhere by default
+    (`UOTP_ENROLLMENT_SCOPE`, decision 6), strict per-client limits."""
+    settings: Settings = request.app.state.settings
+    _scope_gate(request, settings.enrollment_scope, "UOTP_ENROLLMENT_SCOPE")
+    rate_limit(request, "srp", client_key(request))

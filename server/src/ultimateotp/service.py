@@ -14,12 +14,14 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from ultimateotp import b64, formats, ids, signing
+from ultimateotp import b64, formats, ids, signing, srp
+from ultimateotp.alerts import Alerts
 from ultimateotp.clock import Clock
 from ultimateotp.db import Database
 from ultimateotp.errors import ApiError
 from ultimateotp.events import Broker, Event
 from ultimateotp.logging import security_event
+from ultimateotp.login import Login
 from ultimateotp.metrics import Metrics
 from ultimateotp.models import (
     ApproveRequest,
@@ -27,13 +29,16 @@ from ultimateotp.models import (
     EnrollRequest,
     JoinRequest,
     KeyBundle,
+    NewDevice,
     PutKeysRequest,
     RotateRequest,
+    SrpSetup,
 )
 from ultimateotp.settings import Settings
 
 PENDING = "pending"
 MAX_TIMESTAMP_DIGITS = 12
+SRP_SALT_MIN_BYTES = 16
 NONCE_PURGE_EVERY_S = 60
 
 
@@ -48,6 +53,10 @@ class SignedRequest:
     nonce: str | None
     signature: str | None
     body: bytes
+    # Not signed: the resolved client address and the optional `X-UOTP-App-Version` header,
+    # kept as session metadata (decision 9).
+    client_ip: str | None = None
+    app_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,14 +73,22 @@ def _unauthorized(code: str = "invalid_signature", **extra: Any) -> ApiError:
 
 
 class Service:
-    def __init__(
-        self, db: Database, settings: Settings, clock: Clock, broker: Broker, metrics: Metrics
+    def __init__(  # noqa: PLR0913, PLR0917 - the collaborators of the service
+        self,
+        db: Database,
+        settings: Settings,
+        clock: Clock,
+        broker: Broker,
+        metrics: Metrics,
+        alerts: Alerts | None = None,
     ) -> None:
         self.db = db
         self.settings = settings
         self.clock = clock
         self.broker = broker
         self.metrics = metrics
+        self.alerts = alerts or Alerts(settings)
+        self.login = Login(self)
         self._last_nonce_purge = 0
 
     # ------------------------------------------------------------------ helpers
@@ -99,6 +116,7 @@ class Service:
             self._decode(keys.password_wrap, limit, "password_wrap", formats.PASSWORD_WRAP_BYTES)
             self._decode(keys.password_kdf, limit, "password_kdf", formats.KDF_PARAMS_BYTES)
         self._decode(keys.recovery_wrap, limit, "recovery_wrap", formats.RECOVERY_WRAP_BYTES)
+        self._check_srp(keys.srp)
 
     def _sealed(self, value: str) -> bytes:
         return self._decode(
@@ -144,6 +162,7 @@ class Service:
             "created_at": row["created_at"],
             "last_seen_at": row["last_seen_at"],
             "revoked_at": row["revoked_at"],
+            "app_version": row["app_version"],
         }
 
     def _publish_devices(self, account: Row) -> None:
@@ -231,7 +250,9 @@ class Service:
         with self.db.write() as conn:
             self._consume_nonce(conn, device_id, nonce)
             conn.execute(
-                "UPDATE devices SET last_seen_at = ? WHERE id = ?", (self.clock.now(), device_id)
+                "UPDATE devices SET last_seen_at = ?, last_ip = COALESCE(?, last_ip),"
+                " app_version = COALESCE(?, app_version) WHERE id = ?",
+                (self.clock.now(), req.client_ip, req.app_version, device_id),
             )
         return DeviceAuth(device_id=device_id, account_id=row["account_id"])
 
@@ -247,16 +268,57 @@ class Service:
 
     # ------------------------------------------------------------------ admin (CLI)
 
-    def create_account(self) -> tuple[str, str, int]:
+    def create_account(
+        self, email: str | None = None, *, email_check: bool = True
+    ) -> tuple[str, str, int]:
+        """Account + bootstrap token (admin CLI). With email verification on, the address gets
+        a code that the bootstrap enrollment must present once (decision 13)."""
         account_id = ids.new_account_id()
+        code = None
         with self.db.write() as conn:
+            if (
+                email is not None
+                and conn.execute("SELECT 1 FROM accounts WHERE email = ?", (email,)).fetchone()
+            ):
+                raise ApiError(409, "email_taken")
             conn.execute(
-                "INSERT INTO accounts (id, created_at) VALUES (?, ?)",
-                (account_id, self.clock.now()),
+                "INSERT INTO accounts (id, created_at, email, email_check) VALUES (?, ?, ?, ?)",
+                (account_id, self.clock.now(), email, int(email_check)),
             )
             token, expires = self._insert_token(conn, account_id, None)
+            if email is not None and self.settings.email_enabled:
+                code = self.login.issue_code(conn, email)
+        if email is not None and code is not None:
+            self.login.send_code(email, code)
         self.event("account.created", account_id=account_id)
         return account_id, token, expires
+
+    def set_email_check(self, account_id: str, *, enabled: bool) -> None:
+        with self.db.write() as conn:
+            self._account(conn, account_id)
+            conn.execute(
+                "UPDATE accounts SET email_check = ? WHERE id = ?", (int(enabled), account_id)
+            )
+        self.event(
+            "account.email_check", level=logging.WARNING, account_id=account_id, enabled=enabled
+        )
+
+    def account_email(self, account_id: str) -> str | None:
+        with self.db.read() as conn:
+            row = conn.execute("SELECT email FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        return None if row is None else row["email"]
+
+    def _alert(self, account_id: str, title: str, body: str, *, email_notice: bool = False) -> None:
+        """ntfy always (decision 7); an email notice too for recovery and rotation (13)."""
+        self.alerts.notify(title, body)
+        email = self.account_email(account_id) if email_notice else None
+        if email:
+            self.alerts.email(
+                email,
+                title,
+                body + "\nIf this was not you, revoke the devices"
+                " you do not recognize and change your password.\n",
+            )
 
     def _insert_token(
         self, conn: sqlite3.Connection, account_id: str, created_by: str | None
@@ -287,7 +349,14 @@ class Service:
                 " AND d.revoked_at IS NULL) AS active_devices FROM accounts a ORDER BY created_at"
             ).fetchall()
         return [
-            {**self.head(r), "created_at": r["created_at"], "active_devices": r["active_devices"]}
+            {
+                **self.head(r),
+                "email": r["email"],
+                "email_check": bool(r["email_check"]),
+                "srp": r["srp_verifier"] is not None,
+                "created_at": r["created_at"],
+                "active_devices": r["active_devices"],
+            }
             for r in rows
         ]
 
@@ -327,11 +396,138 @@ class Service:
             raise _unauthorized("invalid_token")
         return row
 
+    def store_bundle(self, conn: sqlite3.Connection, account_id: str, keys: KeyBundle) -> None:
+        """Stores the wraps. SRP follows the password path: a new `srp` replaces the record,
+        none keeps it, and no password wrap at all removes it (no password login)."""
+        conn.execute(
+            "UPDATE accounts SET password_wrap = ?, password_kdf = ?, recovery_wrap = ?,"
+            " keys_revision = keys_revision + 1 WHERE id = ?",
+            (keys.password_wrap, keys.password_kdf, keys.recovery_wrap, account_id),
+        )
+        if keys.password_wrap is None:
+            conn.execute(
+                "UPDATE accounts SET srp_user_id = NULL, srp_salt = NULL, srp_verifier = NULL"
+                " WHERE id = ?",
+                (account_id,),
+            )
+        elif keys.srp is not None:
+            conn.execute(
+                "UPDATE accounts SET srp_user_id = ?, srp_salt = ?, srp_verifier = ?,"
+                " srp_failures = 0, srp_locked_until = NULL WHERE id = ?",
+                (keys.srp.srp_user_id, keys.srp.srp_salt, keys.srp.srp_verifier, account_id),
+            )
+
+    def _check_srp(self, srp_setup: SrpSetup | None) -> None:
+        if srp_setup is None:
+            return
+        salt = self._decode(srp_setup.srp_salt, 64, "srp_salt")
+        verifier = int.from_bytes(self._decode(srp_setup.srp_verifier, 512, "srp_verifier"))
+        if len(salt) < SRP_SALT_MIN_BYTES or not srp.valid_public(srp.GROUP_4096, verifier):
+            raise ApiError(400, "invalid_request", "srp: bad salt or verifier")
+
+    def _insert_device(
+        self,
+        conn: sqlite3.Connection,
+        account_id: str,
+        device: NewDevice | EnrollRequest,
+        via: str,
+        req: SignedRequest,
+    ) -> Row:
+        self._decode(device.ed25519_public_key, 32, "ed25519_public_key")
+        self._decode(device.x25519_public_key, 32, "x25519_public_key")
+        if conn.execute(
+            "SELECT 1 FROM devices WHERE ed25519_public_key = ?", (device.ed25519_public_key,)
+        ).fetchone():
+            raise ApiError(409, "device_exists")
+        device_id = ids.new_device_id()
+        now = self.clock.now()
+        conn.execute(
+            "INSERT INTO devices (id, account_id, ed25519_public_key, x25519_public_key, label,"
+            " enrolled_via, created_at, last_seen_at, app_version, last_ip)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                device_id,
+                account_id,
+                device.ed25519_public_key,
+                device.x25519_public_key,
+                device.label,
+                via,
+                now,
+                now,
+                device.app_version or req.app_version,
+                req.client_ip,
+            ),
+        )
+        conn.execute(
+            "UPDATE accounts SET devices_revision = devices_revision + 1 WHERE id = ?",
+            (account_id,),
+        )
+        row: Row = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
+        return row
+
+    def register_device(
+        self,
+        account_id: str,
+        device: NewDevice,
+        req: SignedRequest,
+        *,
+        via: str,
+        conn: sqlite3.Connection,
+    ) -> dict[str, Any]:
+        """Proof of possession of the new key, then the device row (caller's transaction)."""
+        self.verify_pending(conn, req, PENDING, device.ed25519_public_key)
+        row = self._insert_device(conn, account_id, device, via, req)
+        account = self._account(conn, account_id)
+        return {
+            "account_id": account_id,
+            "device": self.device_dict(row),
+            "head": self.head(account),
+        }
+
+    def after_register(self, account_id: str, result: dict[str, Any], req: SignedRequest) -> None:
+        device = result["device"]
+        self.event(
+            "enroll.success",
+            account_id=account_id,
+            device_id=device["device_id"],
+            via=device["enrolled_via"],
+            client_ip=req.client_ip,
+        )
+        self.broker.publish(
+            account_id, Event("devices", {"devices_revision": result["head"]["devices_revision"]})
+        )
+        self._alert(
+            account_id,
+            "UltimateOTP: new device signed in",
+            f'Device "{device["label"]}" ({device["enrolled_via"]}) was added to your account'
+            f" from {req.client_ip or 'an unknown address'}.",
+        )
+
+    def key_attributes(self, conn: sqlite3.Connection, account_id: str) -> dict[str, Any]:
+        account = self._account(conn, account_id)
+        return {
+            "key_epoch": account["key_epoch"],
+            "keys_revision": account["keys_revision"],
+            "password_wrap": account["password_wrap"],
+            "password_kdf": account["password_kdf"],
+            "recovery_wrap": account["recovery_wrap"],
+        }
+
     def enroll(self, token: str | None, body: EnrollRequest, req: SignedRequest) -> dict[str, Any]:
-        self._decode(body.ed25519_public_key, 32, "ed25519_public_key")
-        self._decode(body.x25519_public_key, 32, "x25519_public_key")
         if body.keys is not None:
             self._check_bundle(body.keys)
+        # Bootstrap of an account whose email is unverified: the code from account-create.
+        with self.db.read() as conn:
+            token_row = self._valid_token(conn, token)
+            account = self._account(conn, token_row["account_id"])
+        verify_email = (
+            body.keys is not None
+            and self.settings.email_enabled
+            and account["email"] is not None
+            and account["email_verified_at"] is None
+        )
+        if verify_email:
+            self.login.require_code(account["email"], body.email_code, req.client_ip or "unknown")
         now = self.clock.now()
         with self.db.write() as conn:
             token_row = self._valid_token(conn, token)
@@ -342,54 +538,26 @@ class Service:
                 raise ApiError(400, "keys_required", "the account has no key bundle yet")
             if has_keys and body.keys is not None:
                 raise ApiError(409, "keys_exist", "the account already has a key bundle")
-            if conn.execute(
-                "SELECT 1 FROM devices WHERE ed25519_public_key = ?", (body.ed25519_public_key,)
-            ).fetchone():
-                raise ApiError(409, "device_exists")
-            device_id = ids.new_device_id()
             via = "bootstrap" if body.keys is not None else "token"
-            conn.execute(
-                "INSERT INTO devices (id, account_id, ed25519_public_key, x25519_public_key,"
-                " label, enrolled_via, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    device_id,
-                    account["id"],
-                    body.ed25519_public_key,
-                    body.x25519_public_key,
-                    body.label,
-                    via,
-                    now,
-                    now,
-                ),
-            )
+            row = self._insert_device(conn, account["id"], body, via, req)
             if body.keys is not None:
+                self.store_bundle(conn, account["id"], body.keys)
+            if verify_email:
                 conn.execute(
-                    "UPDATE accounts SET password_wrap = ?, password_kdf = ?, recovery_wrap = ?,"
-                    " keys_revision = keys_revision + 1 WHERE id = ?",
-                    (
-                        body.keys.password_wrap,
-                        body.keys.password_kdf,
-                        body.keys.recovery_wrap,
-                        account["id"],
-                    ),
+                    "UPDATE accounts SET email_verified_at = ? WHERE id = ?", (now, account["id"])
                 )
             conn.execute(
                 "UPDATE enrollment_tokens SET used_at = ?, used_by = ? WHERE token_hash = ?",
-                (now, device_id, token_row["token_hash"]),
-            )
-            conn.execute(
-                "UPDATE accounts SET devices_revision = devices_revision + 1 WHERE id = ?",
-                (account["id"],),
+                (now, row["id"], token_row["token_hash"]),
             )
             account = self._account(conn, account["id"])
-            device = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
-        self.event("enroll.success", account_id=account["id"], device_id=device_id, via=via)
-        self._publish_devices(account)
-        return {
+        result = {
             "account_id": account["id"],
-            "device": self.device_dict(device),
+            "device": self.device_dict(row),
             "head": self.head(account),
         }
+        self.after_register(account["id"], result, req)
+        return result
 
     def recovery_keys(self, token: str | None) -> dict[str, Any]:
         with self.db.write() as conn:
@@ -405,6 +573,13 @@ class Service:
                 (token_row["token_hash"],),
             )
         self.event("recovery.keys_fetched", level=logging.WARNING, account_id=account["id"])
+        self._alert(
+            account["id"],
+            "UltimateOTP: recovery data fetched",
+            "A new device fetched your password and recovery-key wraps with an enrollment token"
+            " (the password or recovery-key path).",
+            email_notice=True,
+        )
         return {
             "account_id": account["id"],
             "key_epoch": account["key_epoch"],
@@ -451,10 +626,15 @@ class Service:
                 raise ApiError(409, "key_epoch_conflict", head=self.head(account))
             if body.base_revision != account["keys_revision"]:
                 raise ApiError(409, "keys_revision_conflict")
-            conn.execute(
-                "UPDATE accounts SET password_wrap = ?, password_kdf = ?, recovery_wrap = ?,"
-                " keys_revision = keys_revision + 1 WHERE id = ?",
-                (body.password_wrap, body.password_kdf, body.recovery_wrap, account["id"]),
+            self.store_bundle(
+                conn,
+                account["id"],
+                KeyBundle(
+                    password_wrap=body.password_wrap,
+                    password_kdf=body.password_kdf,
+                    recovery_wrap=body.recovery_wrap,
+                    srp=body.srp,
+                ),
             )
             result = self._keys(conn, auth)
         self.event("keys.updated", account_id=auth.account_id, device_id=auth.device_id)
@@ -470,6 +650,30 @@ class Service:
         return {
             "devices_revision": account["devices_revision"],
             "devices": [self.device_dict(r) for r in rows],
+        }
+
+    def sessions(self, auth: DeviceAuth) -> dict[str, Any]:
+        """Decision 9: the "Active sessions" list (plain-text metadata, like Ente's)."""
+        with self.db.read() as conn:
+            rows = conn.execute(
+                "SELECT * FROM devices WHERE account_id = ? ORDER BY last_seen_at DESC, id",
+                (auth.account_id,),
+            ).fetchall()
+        return {
+            "sessions": [
+                {
+                    "device_id": r["id"],
+                    "label": r["label"],
+                    "app_version": r["app_version"],
+                    "enrolled_via": r["enrolled_via"],
+                    "created_at": r["created_at"],
+                    "last_seen_at": r["last_seen_at"],
+                    "last_ip": r["last_ip"],
+                    "revoked_at": r["revoked_at"],
+                    "current": r["id"] == auth.device_id,
+                }
+                for r in rows
+            ]
         }
 
     def revoke_device(self, device_id: str, by: DeviceAuth | None) -> dict[str, Any]:
@@ -497,6 +701,12 @@ class Service:
                 account_id=account["id"],
                 device_id=device_id,
                 by=by.device_id if by else "admin-cli",
+            )
+            self._alert(
+                account["id"],
+                "UltimateOTP: device revoked",
+                f'Device "{row["label"]}" was revoked'
+                f" {'by another device' if by else 'from the admin CLI'}.",
             )
             self.broker.publish(
                 account["id"], Event("revoked", {"device_id": device_id}), device_id=device_id
@@ -685,6 +895,11 @@ class Service:
             by=auth.device_id,
         )
         self._publish_devices(account)
+        self._alert(
+            account["id"],
+            "UltimateOTP: new device signed in",
+            f'Device "{device["label"]}" (pairing) was added to your account by another device.',
+        )
         return self.device_dict(device)
 
     def reject_pairing(self, auth: DeviceAuth, pairing_id: str) -> dict[str, Any]:
@@ -918,16 +1133,8 @@ class Service:
             live = self._apply(conn, auth, account, body)
             if any(version != body.head.version for version, _ in live.values()):
                 raise ApiError(400, "incomplete_rotation", "every live item must be re-encrypted")
-            conn.execute(
-                "UPDATE accounts SET password_wrap = ?, password_kdf = ?, recovery_wrap = ?,"
-                " keys_revision = keys_revision + 1, rotation_required = 0 WHERE id = ?",
-                (
-                    body.keys.password_wrap,
-                    body.keys.password_kdf,
-                    body.keys.recovery_wrap,
-                    account["id"],
-                ),
-            )
+            self.store_bundle(conn, account["id"], body.keys)
+            conn.execute("UPDATE accounts SET rotation_required = 0 WHERE id = ?", (account["id"],))
             conn.execute("DELETE FROM device_key_wraps WHERE account_id = ?", (account["id"],))
             conn.executemany(
                 "INSERT INTO device_key_wraps (device_id, key_epoch, account_id, sealed_vault_key,"
@@ -952,6 +1159,13 @@ class Service:
             account_id=account["id"],
             device_id=auth.device_id,
             key_epoch=account["key_epoch"],
+        )
+        self._alert(
+            account["id"],
+            "UltimateOTP: vault key rotated",
+            f"The vault key was rotated to epoch {account['key_epoch']}; every device was"
+            " re-keyed.",
+            email_notice=True,
         )
         self._publish_vault(account)
         return self.head(account)

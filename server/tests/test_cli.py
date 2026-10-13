@@ -18,6 +18,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("UOTP_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("UOTP_MIGRATIONS_DIR", str(MIGRATIONS))
     monkeypatch.setenv("UOTP_LOG_LEVEL", "WARNING")
+    monkeypatch.setenv("UOTP_EMAIL_VERIFICATION", "disabled")
     return tmp_path
 
 
@@ -63,6 +64,7 @@ def test_device_listing_and_revocation(
 ) -> None:
     monkeypatch.setenv("UOTP_DATA_DIR", str(server.settings.data_dir))
     monkeypatch.setenv("UOTP_MIGRATIONS_DIR", str(MIGRATIONS))
+    monkeypatch.setenv("UOTP_EMAIL_VERIFICATION", "disabled")
     account_id = bootstrapped.account_id  # type: ignore[attr-defined]
     device_id = bootstrapped.device.device_id  # type: ignore[attr-defined]
     _, devices = run(capsys, "devices", account_id)
@@ -77,6 +79,7 @@ def test_backup_is_a_consistent_copy(
     server: Server, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bootstrapped: object
 ) -> None:
     monkeypatch.setenv("UOTP_DATA_DIR", str(server.settings.data_dir))
+    monkeypatch.setenv("UOTP_EMAIL_VERIFICATION", "disabled")
     destination = tmp_path / "backup" / "copy.db"
     destination.parent.mkdir()
     assert cli.main(["backup", str(destination)]) == 0

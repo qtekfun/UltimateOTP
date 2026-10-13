@@ -1,7 +1,7 @@
 -- SPDX-FileCopyrightText: 2026 UltimateOTP contributors
 -- SPDX-License-Identifier: GPL-3.0-or-later
 --
--- Initial schema. Portable SQL (SQLite now, PostgreSQL possible), same rules as UltimateTunes'
+-- Initial schema (extended before the first deployment for SRP, email and sessions). Portable SQL (SQLite now, PostgreSQL possible), same rules as UltimateTunes'
 -- contracts/db/README.md: TEXT ids, BIGINT counters, INTEGER 0/1 booleans, Unix-seconds BIGINT
 -- times written by the application clock, base64url TEXT for every opaque byte string.
 -- The server never stores plaintext: blobs, wraps and KDF parameters are client ciphertext.
@@ -21,7 +21,18 @@ CREATE TABLE accounts (
     keys_revision BIGINT NOT NULL DEFAULT 0,
     password_wrap TEXT,
     password_kdf TEXT,
-    recovery_wrap TEXT
+    recovery_wrap TEXT,
+    -- Login identifier (decision 13): lower-case email, verified once.
+    email TEXT UNIQUE,
+    email_verified_at BIGINT,
+    -- Per-account switch for the emailed code at new-device login (decision 13), on by default.
+    email_check INTEGER NOT NULL DEFAULT 1 CHECK (email_check IN (0, 1)),
+    -- SRP-6a (decision 6): only the client-chosen identity, the salt and the verifier.
+    srp_user_id TEXT,
+    srp_salt TEXT,
+    srp_verifier TEXT,
+    srp_failures INTEGER NOT NULL DEFAULT 0,
+    srp_locked_until BIGINT
 );
 
 CREATE TABLE devices (
@@ -30,12 +41,16 @@ CREATE TABLE devices (
     ed25519_public_key TEXT NOT NULL UNIQUE,
     x25519_public_key TEXT NOT NULL,
     label TEXT NOT NULL,
-    enrolled_via TEXT NOT NULL CHECK (enrolled_via IN ('bootstrap', 'token', 'pairing')),
+    enrolled_via TEXT NOT NULL
+        CHECK (enrolled_via IN ('bootstrap', 'token', 'pairing', 'password', 'signup')),
     added_by TEXT,
     added_by_signature TEXT,
     created_at BIGINT NOT NULL,
     last_seen_at BIGINT,
-    revoked_at BIGINT
+    revoked_at BIGINT,
+    -- Session metadata shown in "Active sessions" (decision 9), plain text by design.
+    app_version TEXT,
+    last_ip TEXT
 );
 
 CREATE INDEX ix_devices_account ON devices (account_id);
@@ -111,3 +126,34 @@ CREATE TABLE request_nonces (
 );
 
 CREATE INDEX ix_request_nonces_seen ON request_nonces (seen_at);
+
+-- Emailed one-time codes (decision 13): salted SHA-256 only, one live code per address.
+CREATE TABLE email_codes (
+    email TEXT NOT NULL PRIMARY KEY,
+    salt TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0
+);
+
+-- SRP handshakes between /srp/session and /srp/verify (5 minutes, single use). The server's
+-- ephemeral secret b lives here; account_id is NULL for unknown emails (a decoy handshake).
+CREATE TABLE srp_sessions (
+    id TEXT NOT NULL PRIMARY KEY,
+    account_id TEXT REFERENCES accounts (id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    srp_a TEXT NOT NULL,
+    srp_b_secret TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL
+);
+
+CREATE INDEX ix_srp_sessions_expires ON srp_sessions (expires_at);
+
+-- Server-side random keys (e.g. the HMAC key for decoy SRP attributes of unknown emails).
+CREATE TABLE server_secrets (
+    name TEXT NOT NULL PRIMARY KEY,
+    secret TEXT NOT NULL,
+    created_at BIGINT NOT NULL
+);

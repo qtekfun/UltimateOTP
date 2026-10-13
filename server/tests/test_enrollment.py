@@ -198,7 +198,7 @@ def _enroll_from(server: Server, peer: tuple[str, int], headers: dict[str, str])
 
 
 def test_enrollment_from_the_internet_is_denied_by_default(server: Server) -> None:
-    assert server.settings.enrollment_scope == "lan"
+    assert server.settings.pairing_scope == "lan"
     assert _enroll_from(server, PUBLIC_CLIENT, {}) == 403
     assert _enroll_from(server, LAN_CLIENT, {}) == 201
     assert server.service.metrics.value("uotp_events_total", "enroll.denied_network") == 1
@@ -259,10 +259,10 @@ def test_denied_networks_win(
     assert _enroll_from(server, LAN_CLIENT, {}) == 403
 
 
-def test_enrollment_scope_anywhere_opens_it(
+def test_pairing_scope_anywhere_opens_it(
     make_settings: Callable[..., Settings], make_server: Callable[[Settings], Server]
 ) -> None:
-    server = make_server(make_settings(enrollment_scope="anywhere"))
+    server = make_server(make_settings(pairing_scope="anywhere"))
     assert _enroll_from(server, PUBLIC_CLIENT, {}) == 201
 
 
