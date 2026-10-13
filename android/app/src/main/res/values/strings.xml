@@ -3,13 +3,13 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <resources>
     <string name="app_name" translatable="false">UltimateOTP</string>
-    <string name="welcome_title">Your codes, on your devices</string>
-    <string name="welcome_body">Codes are stored encrypted on this phone and work without a network. Sync with your own server is optional.</string>
+    <string name="welcome_title">Your codes, on your own terms</string>
+    <string name="welcome_body">A private authenticator that works offline and syncs only if you want it to.</string>
     <string name="welcome_signup">Create account</string>
     <string name="welcome_login">Log in</string>
     <string name="welcome_offline">Use without a server</string>
     <string name="welcome_advanced">Advanced: enrollment token or pairing</string>
-    <string name="locked_title">Vault locked</string>
+    <string name="locked_title">UltimateOTP is locked</string>
     <string name="unlock">Unlock</string>
     <string name="unlock_title">Unlock UltimateOTP</string>
     <string name="unlock_subtitle">Use your fingerprint, face or screen lock</string>
@@ -17,13 +17,10 @@
     <string name="add_account">Add account</string>
     <string name="edit_account">Edit account</string>
     <string name="search">Search</string>
-    <string name="empty_vault">No accounts yet. Tap + to scan a QR code or enter a key.</string>
-    <string name="code_copied">Code copied; the clipboard is cleared shortly</string>
     <string name="next_code">Next code</string>
     <string name="back">Back</string>
     <string name="tab_scan">Scan</string>
-    <string name="tab_manual">Enter key</string>
-    <string name="tab_paste">Paste</string>
+    <string name="tab_manual">Manual</string>
     <string name="invalid_code">This is not an OTP account QR code or link.</string>
     <string name="camera_rationale">The camera is only used to read QR codes; nothing is recorded.</string>
     <string name="allow_camera">Allow camera</string>
@@ -39,7 +36,6 @@
     <string name="period">Period (s)</string>
     <string name="tags">Tags, comma separated</string>
     <string name="notes">Notes</string>
-    <string name="favorite">Favorite</string>
     <string name="save">Save</string>
     <string name="delete">Delete</string>
     <string name="delete_title">Delete this account?</string>
@@ -47,14 +43,12 @@
     <string name="cancel">Cancel</string>
     <string name="ok">OK</string>
     <string name="section_security">Security</string>
-    <string name="lock_timeout">Locks after %1$d s in the background</string>
-    <string name="lock_after">Lock after %1$d s</string>
-    <string name="section_backup">Backup</string>
-    <string name="export_encrypted">Encrypted export (.uotp)</string>
-    <string name="export_plain">Plain export (otpauth list)</string>
+    <string name="section_backup">Data</string>
+    <string name="export_encrypted">Encrypted export</string>
+    <string name="export_plain">Plain export</string>
     <string name="export_plain_warning">The file will contain every secret in clear text. Anyone who reads it can generate your codes. Only use it to move to another app, and delete it afterwards.</string>
     <string name="export_anyway">Export anyway</string>
-    <string name="import_file">Import a file (UltimateOTP, Ente Auth, otpauth list)</string>
+    <string name="import_file">Import from a file</string>
     <string name="export_password_title">Export password (at least 8 characters)</string>
     <string name="import_password_title">This file is encrypted. Password?</string>
     <string name="wrong_password">Wrong password, try again</string>
@@ -65,10 +59,10 @@
     <string name="imported">New: %1$d · Already present: %2$d · Unreadable: %3$d</string>
     <string name="transfer_failed">Failed: the file could not be read or written</string>
     <string name="section_sync">Sync</string>
-    <string name="sync_open">Server sync and devices</string>
+    <string name="sync_open">Server and sync</string>
     <string name="sync_title">Sync and devices</string>
-    <string name="sync_intro">Sync is optional. Your codes stay usable offline; the server only stores encrypted data.</string>
-    <string name="login_title">Sign in with email</string>
+    <string name="sync_intro">Sync is optional. Your codes stay usable offline; the server only ever stores encrypted data.</string>
+    <string name="login_title">Log in</string>
     <string name="login_done">Signed in. This device now syncs with your account.</string>
     <string name="login_failed">Sign-in failed. Check the server address and your connection.</string>
     <string name="login_unavailable">Email sign-in is not available on this server version yet. Use an enrollment token or pair with another device.</string>
@@ -83,7 +77,6 @@
     <string name="wrong_code">That code is not right, or it expired.</string>
     <string name="verify">Verify</string>
     <string name="resend">Send a new code</string>
-    <string name="resend_in">Send a new code in %1$d s</string>
     <string name="sign_in">Sign in</string>
     <string name="deriving_hint">Deriving the key from your password takes a few seconds on purpose.</string>
     <string name="pair_join">Join with a QR code from another device</string>
@@ -94,7 +87,7 @@
     <string name="enroll_recovery">Enroll with the recovery key</string>
     <string name="new_password_title">Master password (at least 8 characters)</string>
     <string name="recovery_words">24 recovery words</string>
-    <string name="recovery_title">Your recovery key</string>
+    <string name="recovery_title">Save your recovery key</string>
     <string name="recovery_body">Write these 24 words down and keep them offline. With them you can recover your codes if you forget the password and lose every device. They are shown only once.</string>
     <string name="recovery_saved">I saved them</string>
     <string name="pair_scan_this">Scan this code with the new device.</string>
@@ -122,7 +115,6 @@
     <string name="rotation_required">A device was revoked: rotate the vault key so it cannot read future changes.</string>
     <string name="rotate">Rotate vault key</string>
     <string name="sessions_title">Active sessions</string>
-    <string name="this_device">%1$s (this device)</string>
     <string name="device_revoked">Revoked</string>
     <string name="device_untrusted">Enrolled with the password; not confirmed on this device</string>
     <string name="trust">It is mine</string>
@@ -162,5 +154,146 @@
     <string name="show_password">Show</string>
     <string name="hide_password">Hide</string>
     <string name="copy_words">Copy the 24 words</string>
-    <string name="words_copied">Copied (it clears itself soon). Paste it into your password manager</string>
+    <string name="words_copied">Copied. It clears itself soon</string>
+
+    <!-- Codes -->
+    <string name="copy_code">Copy code</string>
+    <string name="copied">Copied</string>
+    <string name="more_actions">More actions</string>
+    <string name="pinned">Pinned</string>
+    <string name="next_preview">Next %1$s</string>
+    <string name="card_description_hidden">%1$s, %2$s. Code hidden, tap to show</string>
+    <string name="card_description_hotp">%1$s, %2$s. Code %3$s</string>
+    <plurals name="card_description">
+        <item quantity="one">%1$s, %2$s. Code %3$s, valid for %4$d more second</item>
+        <item quantity="other">%1$s, %2$s. Code %3$s, valid for %4$d more seconds</item>
+    </plurals>
+    <plurals name="accounts_count">
+        <item quantity="one">%1$d account</item>
+        <item quantity="other">%1$d accounts</item>
+    </plurals>
+    <plurals name="results_count">
+        <item quantity="one">%1$d result</item>
+        <item quantity="other">%1$d results</item>
+    </plurals>
+    <string name="section_pinned">Pinned</string>
+    <string name="section_all">All accounts</string>
+    <string name="filter_all">All</string>
+    <string name="search_hint">Search accounts and tags</string>
+    <string name="close_search">Close search</string>
+    <string name="clear_search">Clear search</string>
+    <string name="lock_now">Lock now</string>
+    <string name="trash">Trash</string>
+    <string name="layout_grid">Show as grid</string>
+    <string name="layout_list">Show as list</string>
+    <string name="sync_state_local">This device only</string>
+    <string name="sync_state_syncing">Syncing</string>
+    <string name="sync_state_synced">Synced</string>
+    <string name="sync_state_offline">Offline, changes will sync later</string>
+    <string name="sync_state_problem">Sync problem, open for details</string>
+    <string name="empty_title">No accounts yet</string>
+    <string name="empty_body">Scan the QR code a website shows when you turn on two-factor authentication, or bring your codes from another app.</string>
+    <string name="empty_add">Add your first account</string>
+    <string name="empty_import">Import from another app</string>
+    <string name="no_results_title">Nothing found</string>
+    <string name="no_results_body">Try another search, or clear the tag filter.</string>
+    <string name="menu_edit">Edit</string>
+    <string name="menu_pin">Pin to the top</string>
+    <string name="menu_unpin">Unpin</string>
+    <string name="menu_tags">Tags</string>
+
+    <!-- Add -->
+    <string name="add_scan_title">Scan a QR code</string>
+    <string name="add_scan_body">Use the camera or an image</string>
+    <string name="add_manual_title">Enter a key manually</string>
+    <string name="add_manual_body">Type the secret key the service shows</string>
+    <string name="add_import_title">Import</string>
+    <string name="add_import_body">From a file, or paste otpauth links</string>
+    <string name="tab_import">Import</string>
+    <string name="scan_hint">Point the camera at the QR code. Nothing is recorded.</string>
+    <string name="issuer_preview">Service name</string>
+    <string name="secret_invalid">This is not a valid base32 key.</string>
+    <string name="advanced_options">Advanced options</string>
+    <string name="import_file_hint">UltimateOTP exports, Ente Auth exports and plain otpauth lists.</string>
+    <string name="digits_count">%1$d digits</string>
+
+    <!-- Edit -->
+    <string name="edit_options">Options</string>
+    <string name="pin_on_top">Pin to the top</string>
+    <string name="pin_on_top_body">Pinned accounts are listed first</string>
+
+    <!-- Onboarding and lock -->
+    <string name="value_offline_title">Offline first</string>
+    <string name="value_offline_body">Codes live encrypted on this phone and never need a network.</string>
+    <string name="value_sync_title">End-to-end encrypted sync</string>
+    <string name="value_sync_body">Your devices share one vault; the server only sees ciphertext.</string>
+    <string name="value_server_title">Your own server</string>
+    <string name="value_server_body">Self-hosted. No third-party account, no tracking.</string>
+    <string name="locked_body">Unlock with your fingerprint, face or screen lock to see your codes.</string>
+
+    <!-- Account flows -->
+    <string name="step_of">Step %1$d of %2$d</string>
+    <string name="signup_email_title">Your email and server</string>
+    <string name="code_step_title">Check your inbox</string>
+    <string name="password_step_title">Choose a password</string>
+    <string name="signup_done_title">Account created</string>
+    <string name="login_email_title">Welcome back</string>
+    <string name="login_intro">Enter your server and your email. We will email you a one-time code.</string>
+    <string name="login_password_title">Your password</string>
+    <string name="login_done_title">You are signed in</string>
+    <plurals name="resend_in_seconds">
+        <item quantity="one">Send a new code in %1$d second</item>
+        <item quantity="other">Send a new code in %1$d seconds</item>
+    </plurals>
+
+    <!-- Settings -->
+    <string name="lock_timeout_title">Lock after</string>
+    <string name="clipboard_title">Clear the clipboard after</string>
+    <string name="hide_codes_title">Hide codes until tapped</string>
+    <string name="hide_codes_body">Codes show as dots; tap an account to reveal it</string>
+    <string name="section_appearance">Appearance</string>
+    <string name="section_about">About</string>
+    <string name="section_devices">Devices</string>
+    <string name="section_account">Account</string>
+    <string name="theme_title">Theme</string>
+    <string name="theme_system">System default</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="amoled_title">True black</string>
+    <string name="amoled_body">A black background in the dark theme, for OLED screens</string>
+    <string name="dynamic_color_title">Dynamic colour</string>
+    <string name="dynamic_color_body">Take the colours from your wallpaper (Android 12 and later)</string>
+    <string name="grid_title">Codes as a grid</string>
+    <string name="grid_body">Compact cards, two or more per row</string>
+    <string name="sync_open_body">Account, server address and linked devices</string>
+    <string name="export_encrypted_body">A password-protected .uotp file</string>
+    <string name="export_plain_body">Every secret in clear text, to move to another app</string>
+    <string name="import_file_body">UltimateOTP, Ente Auth or an otpauth list</string>
+    <string name="duration_immediately">Immediately</string>
+    <plurals name="duration_seconds">
+        <item quantity="one">%1$d second</item>
+        <item quantity="other">%1$d seconds</item>
+    </plurals>
+    <plurals name="duration_minutes">
+        <item quantity="one">%1$d minute</item>
+        <item quantity="other">%1$d minutes</item>
+    </plurals>
+    <string name="about_version">Version %1$s</string>
+    <string name="about_license_title">Free software</string>
+    <string name="about_license_body">GPL-3.0-or-later. No ads, no analytics.</string>
+    <string name="about_icons_title">Brand icons</string>
+    <string name="about_icons_body">Simple Icons (CC0 1.0). Logos belong to their owners.</string>
+
+    <!-- Sessions and sync -->
+    <string name="sessions_body">Phones and tablets signed in to your account</string>
+    <string name="sessions_intro">Every device that can read your vault. Revoke one you no longer use or do not recognise.</string>
+    <string name="sessions_no_account">You are not signed in to a server, so there are no other devices.</string>
+    <string name="this_device_chip">This device</string>
+    <string name="device_untrusted_chip">Not confirmed</string>
+    <string name="unknown_value">unknown</string>
+    <string name="revoke_title">Revoke %1$s?</string>
+    <string name="revoke_body">This device loses access to your account at once. Rotate the vault key afterwards so it cannot read future changes.</string>
+    <string name="status_synced">Up to date</string>
+    <string name="pair_add_body">Show a QR code for a new device to scan</string>
+    <string name="upload_local_hint">Only after a server restore</string>
 </resources>
