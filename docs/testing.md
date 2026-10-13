@@ -129,6 +129,9 @@ with 1.5x headroom.
   all four ABIs. What no test here shows is a 1 GiB allocation inside a 32-bit process's address
   space on a phone; the experimental `x86 / API 30` CI entry runs the same Argon2id test on a
   32-bit emulator image, which is the closest proxy available without an ARM device.
+  Status (2026-10-14): that job runs on the `google_apis` x86 API 30 image, because the `default` one
+  does not exist on the GitHub runners, and it passes. It is the only evidence of the key derivation
+  with a 4-byte `size_t`; real armeabi-v7a hardware is still untested.
 
 ## Known bugs the suite found
 
