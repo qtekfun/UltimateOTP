@@ -7,8 +7,11 @@ import com.qtekfun.ultimateotp.core.crypto.CryptoException
 import com.qtekfun.ultimateotp.core.crypto.EnteExport
 import com.qtekfun.ultimateotp.core.crypto.ExportFile
 import com.qtekfun.ultimateotp.core.crypto.PasswordKdf
+import com.qtekfun.ultimateotp.core.importers.ForeignFormat
+import com.qtekfun.ultimateotp.core.importers.ForeignImport
+import com.qtekfun.ultimateotp.core.importers.ImportParse
+import com.qtekfun.ultimateotp.core.importers.ImportedAccount
 import com.qtekfun.ultimateotp.core.otp.OtpAuthUri
-import com.qtekfun.ultimateotp.core.otp.OtpParams
 import com.qtekfun.ultimateotp.core.otp.PlainListImport
 import com.qtekfun.ultimateotp.core.sync.model.ItemCodec
 import com.qtekfun.ultimateotp.core.sync.model.ItemFormatException
@@ -22,8 +25,11 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import java.util.UUID
 
-/** What a file is, before asking the user anything. */
-enum class ImportKind { UOTP_EXPORT, ENTE_ENCRYPTED, PLAIN_LIST }
+/**
+ * What a file is, before asking the user anything. [FOREIGN] is another authenticator's export
+ * (Aegis, 2FAS, andOTP, Raivo, Bitwarden, Proton).
+ */
+enum class ImportKind { UOTP_EXPORT, ENTE_ENCRYPTED, PLAIN_LIST, FOREIGN }
 
 sealed interface ImportOutcome {
     data class Imported(
@@ -32,11 +38,19 @@ sealed interface ImportOutcome {
 
     data class PasswordRequired(
         val kind: ImportKind,
+        /** Which app's file, for [ImportKind.FOREIGN]. */
+        val source: ForeignFormat? = null,
     ) : ImportOutcome
 
     data object WrongPassword : ImportOutcome
 
     data object Unsupported : ImportOutcome
+
+    /** A file of an unsupported variant or one that is damaged; [reason] is a fixed text without file content. */
+    data class Unreadable(
+        val format: ForeignFormat?,
+        val reason: String,
+    ) : ImportOutcome
 }
 
 /** Encrypted and plain export, and import of our own, Ente's and plain URI-list files. */
@@ -48,6 +62,7 @@ class VaultTransfer(
         when {
             ExportFile.isExport(bytes) -> ImportKind.UOTP_EXPORT
             EnteExport.isEncryptedExport(String(bytes, Charsets.UTF_8)) -> ImportKind.ENTE_ENCRYPTED
+            ForeignImport.detect(bytes) != null -> ImportKind.FOREIGN
             else -> ImportKind.PLAIN_LIST
         }
 
@@ -70,7 +85,8 @@ class VaultTransfer(
     }
 
     /** One `otpauth://` URI per line (Ente/Aegis compatible). Unencrypted: the UI warns first. */
-    suspend fun exportPlain(): String = vault.snapshot().joinToString("\n", postfix = "\n") { OtpAuthUri.format(it.otp) }
+    suspend fun exportPlain(): String =
+        vault.snapshot(includeTrashed = false).joinToString("\n", postfix = "\n") { OtpAuthUri.format(it.otp) }
 
     suspend fun import(
         bytes: ByteArray,
@@ -93,8 +109,38 @@ class VaultTransfer(
                 }
             }
 
+            ImportKind.FOREIGN -> {
+                foreign(withContext(Dispatchers.Default) { ForeignImport.parse(bytes, password) })
+            }
+
             ImportKind.PLAIN_LIST -> {
                 plain(String(bytes, Charsets.UTF_8))
+            }
+        }
+
+    private suspend fun foreign(parsed: ImportParse): ImportOutcome =
+        when (parsed) {
+            is ImportParse.PasswordRequired -> {
+                ImportOutcome.PasswordRequired(ImportKind.FOREIGN, parsed.format)
+            }
+
+            is ImportParse.WrongPassword -> {
+                ImportOutcome.WrongPassword
+            }
+
+            is ImportParse.Unsupported -> {
+                ImportOutcome.Unreadable(parsed.format, parsed.reason)
+            }
+
+            is ImportParse.Parsed -> {
+                if (parsed.accounts.isEmpty() && parsed.rejected > 0) {
+                    ImportOutcome.Unreadable(
+                        parsed.format,
+                        "None of the ${parsed.rejected} entries could be imported (unsupported account types or damaged data)",
+                    )
+                } else {
+                    ImportOutcome.Imported(vault.importAccounts(parsed.accounts).copy(rejected = parsed.rejected))
+                }
             }
         }
 
@@ -122,15 +168,17 @@ class VaultTransfer(
                     .getValue("items")
                     .jsonArray
             }.getOrNull() ?: return ImportOutcome.Unsupported
-        val accounts = mutableListOf<OtpParams>()
+        val accounts = mutableListOf<ImportedAccount>()
         var rejected = 0
         for (element in items) {
             try {
-                accounts += ItemCodec.decode(UUID.randomUUID(), element.toString().toByteArray()).otp
+                val item = ItemCodec.decode(UUID.randomUUID(), element.toString().toByteArray())
+                // What was in the trash when the file was written stays out.
+                if (!item.trashed) accounts += ImportedAccount(item.otp, item.notes, item.favorite)
             } catch (_: ItemFormatException) {
                 rejected++
             }
         }
-        return ImportOutcome.Imported(vault.import(accounts).copy(rejected = rejected))
+        return ImportOutcome.Imported(vault.importAccounts(accounts).copy(rejected = rejected))
     }
 }
