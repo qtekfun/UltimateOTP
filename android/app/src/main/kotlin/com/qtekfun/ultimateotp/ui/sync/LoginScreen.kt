@@ -39,6 +39,7 @@ import androidx.lifecycle.viewModelScope
 import com.qtekfun.ultimateotp.R
 import com.qtekfun.ultimateotp.core.crypto.CryptoException
 import com.qtekfun.ultimateotp.core.sync.api.ApiException
+import com.qtekfun.ultimateotp.core.sync.login.AccountProblem
 import com.qtekfun.ultimateotp.core.sync.login.EmailLogin
 import com.qtekfun.ultimateotp.sync.SyncController
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -72,8 +73,10 @@ sealed interface LoginStep {
 
     data object Done : LoginStep
 
+    /** [problem]: what the server answered, e.g. `account_locked` with its `retry_after`. */
     data class Failed(
         val unavailable: Boolean,
+        val problem: AccountProblem? = null,
     ) : LoginStep
 }
 
@@ -99,7 +102,7 @@ class LoginViewModel
                 } catch (_: UnsupportedOperationException) {
                     LoginStep.Failed(unavailable = true)
                 } catch (e: ApiException) {
-                    onWrong?.takeIf { e.status in WRONG_STATUSES }?.invoke() ?: LoginStep.Failed(unavailable = false)
+                    onWrong?.takeIf { e.status in WRONG_STATUSES }?.invoke() ?: LoginStep.Failed(false, AccountProblem.of(e))
                 } catch (_: CryptoException) {
                     onWrong?.invoke() ?: previous
                 } catch (_: IOException) {
@@ -193,7 +196,19 @@ fun LoginScreen(
 
                 is LoginStep.Failed -> {
                     Text(
-                        stringResource(if (s.unavailable) R.string.login_unavailable else R.string.login_failed),
+                        when {
+                            s.unavailable -> {
+                                stringResource(R.string.login_unavailable)
+                            }
+
+                            s.problem is AccountProblem.AccountLocked || s.problem is AccountProblem.RateLimited -> {
+                                accountProblemText(s.problem)
+                            }
+
+                            else -> {
+                                stringResource(R.string.login_failed)
+                            }
+                        },
                         color = MaterialTheme.colorScheme.error,
                     )
                     Button(onClick = model::restart) { Text(stringResource(R.string.try_again)) }

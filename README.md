@@ -2,6 +2,12 @@
 
 Self-hosted, end-to-end encrypted OTP authenticator: Android app + Python backend.
 
+Like Ente Auth, the app starts with a choice: **Create account** (email, emailed code, password
+and a 24-word recovery key, on a server where the owner opened sign-up with
+`UOTP_SIGNUP=enabled`), **Log in** (email, code, password) or **Use without a server**. An
+enrollment token from the server's CLI and QR pairing remain available as advanced options. See
+[docs/deploy.md](docs/deploy.md) §3 step 6 for setting up the first device.
+
 - Design: [docs/design.md](docs/design.md)
 - Owner decisions: [docs/decisions.md](docs/decisions.md)
 - `server/`: backend (Python, FastAPI, SQLite); deployment in [docs/deploy.md](docs/deploy.md), live sync in [docs/sync.md](docs/sync.md)

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -14,8 +15,10 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -32,16 +35,27 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.qtekfun.ultimateotp.R
 import com.qtekfun.ultimateotp.core.vault.secure.AuthenticationRequiredException
 import com.qtekfun.ultimateotp.ui.Authenticate
+import com.qtekfun.ultimateotp.ui.FirstRun
 import com.qtekfun.ultimateotp.ui.RootViewModel
 import kotlinx.coroutines.launch
 
+/** First run, like Ente Auth: create an account, log in, or stay offline; token/pairing is advanced. */
 @Composable
-fun WelcomeScreen(onCreate: () -> Unit) {
+fun WelcomeScreen(onChoice: (FirstRun) -> Unit) {
     Centered {
         Icon(Icons.Default.Lock, contentDescription = null)
         Text(stringResource(R.string.welcome_title), style = MaterialTheme.typography.headlineSmall)
         Text(stringResource(R.string.welcome_body), textAlign = TextAlign.Center)
-        Button(onClick = onCreate) { Text(stringResource(R.string.welcome_create)) }
+        Button(onClick = { onChoice(FirstRun.SIGN_UP) }, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.welcome_signup))
+        }
+        OutlinedButton(onClick = { onChoice(FirstRun.LOG_IN) }, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.welcome_login))
+        }
+        TextButton(onClick = { onChoice(FirstRun.OFFLINE) }) { Text(stringResource(R.string.welcome_offline)) }
+        TextButton(onClick = { onChoice(FirstRun.ADVANCED) }) {
+            Text(stringResource(R.string.welcome_advanced), style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 
