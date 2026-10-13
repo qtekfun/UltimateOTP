@@ -20,8 +20,14 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.qtekfun.ultimateotp.auth.AuthGate
+import com.qtekfun.ultimateotp.auth.AuthHost
+import com.qtekfun.ultimateotp.auth.GateResult
 import com.qtekfun.ultimateotp.core.vault.VaultRepository
 import com.qtekfun.ultimateotp.core.vault.VaultState
+import com.qtekfun.ultimateotp.features.AccountScreen
+import com.qtekfun.ultimateotp.features.AutofillAssociationsScreen
+import com.qtekfun.ultimateotp.features.TrashScreen
 import com.qtekfun.ultimateotp.ui.add.AddScreen
 import com.qtekfun.ultimateotp.ui.codes.AddMode
 import com.qtekfun.ultimateotp.ui.codes.CodesScreen
@@ -50,6 +56,7 @@ class RootViewModel
     @Inject
     constructor(
         val vault: VaultRepository,
+        val gate: AuthGate,
     ) : ViewModel() {
         val state: StateFlow<VaultState> = vault.state
         private val _firstRun = MutableStateFlow<FirstRun?>(null)
@@ -59,11 +66,26 @@ class RootViewModel
          * Every path starts with the local vault (its key becomes the account's vault key on
          * sign-up or bootstrap, or receives the account's on login); then [choice] opens its screen.
          */
-        fun create(choice: FirstRun) =
+        fun create(choice: FirstRun) {
+            if (creating) return
+            creating = true
             viewModelScope.launch {
-                _firstRun.value = choice
-                vault.create()
+                try {
+                    // The first write of the vault key may need the user to authenticate. If that
+                    // is declined the person stays on the welcome screen with a message.
+                    if (gate.attempt { vault.create() } is GateResult.Done) _firstRun.value = choice
+                } finally {
+                    creating = false
+                }
             }
+        }
+
+        private var creating = false
+
+        /** Unlocks the stored vault, asking the user to authenticate if the Keystore wants it. */
+        fun unlock() {
+            viewModelScope.launch { gate.attempt { vault.unlock() } }
+        }
 
         fun firstRunShown() {
             _firstRun.value = null
@@ -81,9 +103,10 @@ fun AppRoot(
     val state by model.state.collectAsState()
     when (state) {
         VaultState.NONE -> WelcomeScreen(onChoice = model::create)
-        VaultState.LOCKED -> LockScreen(authenticate)
+        VaultState.LOCKED -> LockScreen(model)
         VaultState.UNLOCKED -> Unlocked(pendingLink, model)
     }
+    AuthHost(model.gate, authenticate)
 }
 
 private const val NAV_MS = 280
@@ -137,6 +160,7 @@ private fun Unlocked(
                 onEdit = { id -> nav.navigate("edit/$id") },
                 onSettings = { nav.navigate("settings") },
                 onSync = { nav.navigate("sync?link=") },
+                onTrash = { nav.navigate("trash") },
             )
         }
         composable(
@@ -166,8 +190,14 @@ private fun Unlocked(
                 onBack = { nav.popBackStack() },
                 onSync = { nav.navigate("sync?link=") },
                 onSessions = { nav.navigate("sessions") },
+                onTrash = { nav.navigate("trash") },
+                onAccount = { nav.navigate("account") },
+                onAutofillAssociations = { nav.navigate("autofill-associations") },
             )
         }
+        composable("trash") { TrashScreen(onBack = { nav.popBackStack() }) }
+        composable("account") { AccountScreen(onBack = { nav.popBackStack() }) }
+        composable("autofill-associations") { AutofillAssociationsScreen(onBack = { nav.popBackStack() }) }
         composable("sessions") { SessionsScreen(onBack = { nav.popBackStack() }) }
         composable(
             "sync?link={link}",

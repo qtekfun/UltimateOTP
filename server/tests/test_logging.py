@@ -82,6 +82,9 @@ def test_requests_and_security_events_are_logged_without_secrets(
     assert "http.request" in events
     assert "auth.failure" in events
     access = next(line for line in lines if line.get("event") == "http.request")
-    assert access["client_ip"] == "192.168.1.10"
+    # Never the address: the anonymized id (anon.py).
+    assert "client_ip" not in access
+    assert str(access["client_id"]).startswith("c_")
+    assert "192.168.1.10" not in stream.getvalue()
     assert "?" not in str(access["path"])
     assert TOKEN not in stream.getvalue()

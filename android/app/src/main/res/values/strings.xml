@@ -98,6 +98,7 @@
     <string name="pair_add">Add a device</string>
     <string name="fail_network">The server could not be reached.</string>
     <string name="fail_secret">Wrong password or recovery key.</string>
+    <string name="fail_insecure_url">The server address must start with https://. Plain http:// is not accepted.</string>
     <string name="fail_lan">Enrollment only works from your home network. Set the LAN address, or allow remote enrollment.</string>
     <string name="fail_rejected">The server\'s data failed verification and was not used. Your local codes are untouched.</string>
     <string name="fail_refused">The server refused the request (expired or used token or session).</string>
@@ -303,4 +304,8 @@
     <string name="status_synced">Up to date</string>
     <string name="pair_add_body">Show a QR code for a new device to scan</string>
     <string name="upload_local_hint">Only after a server restore</string>
+    <string name="moved_to_trash">Moved to the trash</string>
+    <string name="undo">Undo</string>
+    <string name="move_up">Move up</string>
+    <string name="move_down">Move down</string>
 </resources>

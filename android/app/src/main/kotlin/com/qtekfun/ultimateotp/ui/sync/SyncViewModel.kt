@@ -5,6 +5,9 @@ package com.qtekfun.ultimateotp.ui.sync
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.qtekfun.ultimateotp.BuildConfig
+import com.qtekfun.ultimateotp.auth.AuthGate
+import com.qtekfun.ultimateotp.auth.GateResult
 import com.qtekfun.ultimateotp.core.crypto.CryptoException
 import com.qtekfun.ultimateotp.core.sync.DeviceView
 import com.qtekfun.ultimateotp.core.sync.EnrollLink
@@ -22,6 +25,7 @@ import com.qtekfun.ultimateotp.sync.SyncStatus
 import com.qtekfun.ultimateotp.util.AppSettings
 import com.qtekfun.ultimateotp.util.Settings
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -74,11 +78,12 @@ sealed interface SyncStep {
         val what: DoneKind,
     ) : SyncStep
 
-    enum class Reason { NETWORK, WRONG_SECRET, LAN_ONLY, REJECTED_STATE, REFUSED, SERVER, LOGIN_UNAVAILABLE }
+    enum class Reason { NETWORK, WRONG_SECRET, LAN_ONLY, REJECTED_STATE, REFUSED, SERVER, LOGIN_UNAVAILABLE, INSECURE_URL, UNEXPECTED }
 
     enum class DoneKind { ENROLLED, PAIRED, PAIRING_DECLINED, ROTATED, UPLOADED, PASSWORD_CHANGED }
 }
 
+@Suppress("TooManyFunctions") // one small handler per screen action; a split would scatter the sign-in flow
 @HiltViewModel
 class SyncViewModel
     @Inject
@@ -86,6 +91,7 @@ class SyncViewModel
         private val controller: SyncController,
         private val vault: VaultRepository,
         private val appSettings: AppSettings,
+        private val gate: AuthGate,
     ) : ViewModel() {
         val status: StateFlow<SyncStatus> = controller.status
         val settings: StateFlow<Settings> = appSettings.settings.stateIn(viewModelScope, SharingStarted.Eagerly, Settings())
@@ -109,12 +115,14 @@ class SyncViewModel
             enrollmentUrl: String,
             allowRemote: Boolean,
         ) = viewModelScope.launch {
-            appSettings.update {
-                it.copy(
-                    serverUrl = serverUrl.trim(),
-                    enrollmentUrl = enrollmentUrl.trim(),
-                    allowRemoteEnrollment = allowRemote,
-                )
+            gate.attempt {
+                appSettings.update {
+                    it.copy(
+                        serverUrl = serverUrl.trim(),
+                        enrollmentUrl = enrollmentUrl.trim(),
+                        allowRemoteEnrollment = allowRemote,
+                    )
+                }
             }
         }
 
@@ -128,14 +136,36 @@ class SyncViewModel
             EnrollLink.parse(link)?.let(onEnrollLink)
         }
 
+        /**
+         * Runs [block] behind the [AuthGate] (the operations here write Keystore secrets, and the
+         * engine checks the Keystore before any request that changes the server). Declining the
+         * prompt returns to the step the screen was on; the gate has told the person why.
+         */
         private fun run(
             kind: SyncStep.Busy.Kind = SyncStep.Busy.Kind.WORKING,
             block: suspend () -> SyncStep,
         ) {
             viewModelScope.launch {
+                val before = _step.value
                 _step.value = SyncStep.Busy(kind)
-                _step.value = attempt(block)
+                _step.value =
+                    attempt {
+                        when (val r = gate.run(block)) {
+                            is GateResult.Done -> r.value
+                            else -> before.takeUnless { it is SyncStep.Busy } ?: SyncStep.Idle
+                        }
+                    }
+                runRefresh()
+            }
+        }
+
+        private suspend fun runRefresh() {
+            try {
                 controller.refresh()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // The step is already shown; a failed account re-read must not end the app.
             }
         }
 
@@ -159,16 +189,31 @@ class SyncViewModel
                 SyncStep.Failed(SyncStep.Reason.REJECTED_STATE)
             } catch (_: IllegalArgumentException) {
                 SyncStep.Failed(SyncStep.Reason.REFUSED)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // A bug or a full disk: shown as a failed step, never as a dead process.
+                SyncStep.Failed(SyncStep.Reason.UNEXPECTED)
             }
 
         /** Enrollment and recovery go to the LAN address unless the owner allowed otherwise (decision 4). */
         private fun enrollmentUrl(server: String): String? {
             val s = settings.value
-            return when (val c = EnrollmentPolicy.choose(server, s.enrollmentUrl, s.allowRemoteEnrollment)) {
-                is EnrollmentPolicy.Choice.Use -> c.url
-                EnrollmentPolicy.Choice.Refused -> null
-            }
+            return (choose(server, s) as? EnrollmentPolicy.Choice.Use)?.url
         }
+
+        private fun choose(
+            server: String,
+            s: Settings,
+        ) = EnrollmentPolicy.choose(server, s.enrollmentUrl, s.allowRemoteEnrollment, allowCleartext = BuildConfig.DEBUG)
+
+        /** Why [enrollmentUrl] gave nothing: plain http (not allowed outside debug builds) or no LAN address. */
+        private fun refusal(server: String): SyncStep.Reason =
+            if (choose(server, settings.value) == EnrollmentPolicy.Choice.InsecureUrl) {
+                SyncStep.Reason.INSECURE_URL
+            } else {
+                SyncStep.Reason.LAN_ONLY
+            }
 
         /** Points the account at the everyday server URL after enrolling through the LAN address. */
         private suspend fun useServer(server: String) {
@@ -183,7 +228,7 @@ class SyncViewModel
             label: String,
             emailCode: String,
         ) = run(SyncStep.Busy.Kind.DERIVING_KEY) {
-            val url = enrollmentUrl(server) ?: return@run SyncStep.Failed(SyncStep.Reason.LAN_ONLY)
+            val url = enrollmentUrl(server) ?: return@run SyncStep.Failed(refusal(server))
             val words = engine.bootstrap(url, token.trim(), password, label, emailCode.trim().ifBlank { null })
             useServer(server)
             controller.syncNow()
@@ -196,7 +241,7 @@ class SyncViewModel
             password: String,
             label: String,
         ) = run(SyncStep.Busy.Kind.DERIVING_KEY) {
-            val url = enrollmentUrl(server) ?: return@run SyncStep.Failed(SyncStep.Reason.LAN_ONLY)
+            val url = enrollmentUrl(server) ?: return@run SyncStep.Failed(refusal(server))
             engine.enrollWithPassword(url, token.trim(), password, label)
             useServer(server)
             controller.syncNow()
@@ -209,7 +254,7 @@ class SyncViewModel
             words: String,
             label: String,
         ) = run {
-            val url = enrollmentUrl(server) ?: return@run SyncStep.Failed(SyncStep.Reason.LAN_ONLY)
+            val url = enrollmentUrl(server) ?: return@run SyncStep.Failed(refusal(server))
             engine.enrollWithRecoveryKey(url, token.trim(), words, label)
             useServer(server)
             controller.syncNow()
@@ -259,7 +304,11 @@ class SyncViewModel
                 var joined: JoinedPairing? = null
                 val failed =
                     attempt {
-                        joined = engine.joinPairing(link, label)
+                        // Saves this device's keys first thing, which may need the user to authenticate.
+                        when (val r = gate.run { engine.joinPairing(link, label) }) {
+                            is GateResult.Done -> joined = r.value
+                            else -> Unit
+                        }
                         SyncStep.Idle
                     }
                 val pairing = joined
@@ -270,14 +319,24 @@ class SyncViewModel
                 _step.value = SyncStep.JoinWaiting(pairing.sasWords)
                 _step.value =
                     attempt {
-                        if (engine.awaitPairing(pairing, label)) {
-                            controller.syncNow()
-                            SyncStep.Done(SyncStep.DoneKind.PAIRED)
-                        } else {
-                            SyncStep.Done(SyncStep.DoneKind.PAIRING_DECLINED)
+                        // Adopting the key may need the user to authenticate after a long wait; the
+                        // server's answer can be read again, so the wait is simply resumed.
+                        when (val r = gate.run { engine.awaitPairing(pairing, label) }) {
+                            is GateResult.Done -> {
+                                if (r.value) {
+                                    controller.syncNow()
+                                    SyncStep.Done(SyncStep.DoneKind.PAIRED)
+                                } else {
+                                    SyncStep.Done(SyncStep.DoneKind.PAIRING_DECLINED)
+                                }
+                            }
+
+                            else -> {
+                                SyncStep.Idle
+                            }
                         }
                     }
-                controller.refresh()
+                runRefresh()
             }
         }
 
@@ -293,7 +352,7 @@ class SyncViewModel
 
         fun trust(deviceId: String) =
             viewModelScope.launch {
-                engine.trustDevice(deviceId)
+                gate.attempt { engine.trustDevice(deviceId) }
                 loadDevices()
             }
 

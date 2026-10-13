@@ -1,0 +1,7 @@
+Subject: Tu código de acceso de UltimateOTP
+
+Tu código de UltimateOTP es $code.
+
+Caduca en $minutes minutos y solo sirve una vez.
+
+Si no has intentado iniciar sesión, alguien conoce tu correo electrónico. Puedes ignorar este mensaje: todavía necesitaría tu contraseña.

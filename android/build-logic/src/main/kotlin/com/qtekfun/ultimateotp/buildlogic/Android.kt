@@ -11,6 +11,7 @@ import org.gradle.kotlin.dsl.configure
 import org.gradle.kotlin.dsl.withType
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtension
+import java.io.File
 
 internal const val COMPILE_SDK = 37
 internal const val TARGET_SDK = 37
@@ -54,6 +55,10 @@ internal fun Project.configureAndroid(android: CommonExtension) {
     }
 
     useJvmLibsodiumInUnitTests()
+    android.sourceSets
+        .getByName("test")
+        .kotlin.directories
+        .add(testGuardDir().path)
 
     // Robolectric's FileDescriptor interceptor reflects into java.io, closed by default since JDK 17,
     // and SDK 36 shared memory reaches jdk.internal.access.
@@ -83,3 +88,12 @@ private fun Project.useJvmLibsodiumInUnitTests() {
     }
     dependencies.add("testRuntimeOnly", jvmBindings)
 }
+
+/**
+ * The guard test (`config/testguard`) joins every module's unit tests: JUnit skips a `@Test` that
+ * returns a value without a word, and this fails the build instead.
+ */
+internal fun Project.testGuardDir(): File =
+    isolated.rootProject.projectDirectory
+        .dir("config/testguard")
+        .asFile

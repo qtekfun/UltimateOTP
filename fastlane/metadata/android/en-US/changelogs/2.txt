@@ -1,0 +1,1 @@
+No app changes. The release process now also publishes the server image.

@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 UltimateOTP contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<resources>
+    <!-- Inactivity lock -->
+    <string name="lock_choice_never">Never</string>
+
+    <!-- Autofill -->
+    <string name="section_autofill">Autofill</string>
+    <string name="autofill_state_on">UltimateOTP is the autofill service: it offers codes in fields that ask for one.</string>
+    <string name="autofill_state_off">Autofill is off. Turn it on to get codes offered in other apps and browsers.</string>
+    <string name="autofill_enable">Autofill settings</string>
+    <string name="autofill_associations">Apps and sites per entry</string>
+    <string name="autofill_associations_help">One package name or domain per line or comma, for example com.example.app or example.com. The issuer is also tried.</string>
+    <string name="autofill_save">Save</string>
+    <string name="autofill_unlock">Unlock UltimateOTP</string>
+    <string name="autofill_dataset">%1$s · tap for the code</string>
+    <string name="autofill_dataset_sub">%1$s</string>
+
+    <!-- Error log -->
+    <string name="section_diagnostics">Error log</string>
+    <string name="diagnostics_help">Kept on this phone only: crashes and recent events, without codes, secrets or addresses.</string>
+    <string name="diagnostics_share">Share error log</string>
+    <string name="diagnostics_save">Save error log</string>
+    <string name="diagnostics_clear">Clear error log</string>
+
+    <!-- Trash -->
+    <string name="trash_empty">The trash is empty. Deleted entries stay here for 30 days.</string>
+    <string name="trash_restore">Restore</string>
+    <string name="trash_delete_forever">Delete forever</string>
+    <string name="trash_empty_all">Empty trash</string>
+    <string name="trash_server_title">Removed for good, still on the server</string>
+    <string name="trash_server_load">Look in the server history</string>
+    <string name="trash_server_none">Nothing recoverable on the server.</string>
+
+    <!-- Account -->
+    <string name="account_settings">Account</string>
+    <string name="account_change_email">Change email</string>
+    <string name="account_sign_out_others">Sign out everywhere else</string>
+    <string name="account_export">Export everything the server holds</string>
+    <string name="account_delete">Delete account</string>
+    <string name="account_confirm_delete">This deletes your account and everything stored for it on the server, for good. Your entries stay on this phone as an offline vault.</string>
+    <string name="account_confirm_others">Every other device is signed out and the vault key is changed.</string>
+    <string name="account_confirm_export">Saves a file with the encrypted data the server holds.</string>
+    <string name="account_confirm_email">A code is sent to the new address.</string>
+    <string name="account_password">Account password</string>
+    <string name="account_email_code">Emailed code</string>
+    <string name="account_send_code">Email me a code instead</string>
+    <string name="account_new_email">New email address</string>
+    <string name="account_continue">Continue</string>
+    <string name="account_done_deleted">Account deleted.</string>
+    <string name="account_done_email">Email changed to %1$s.</string>
+    <string name="account_done_others">Other devices signed out: %1$d. Vault key changed: %2$s.</string>
+    <string name="account_done_export">Export ready.</string>
+    <string name="account_problem">Could not do that (%1$s). Nothing was changed.</string>
+    <string name="account_no_account">This phone is not signed in to an account.</string>
+    <string name="yes">Yes</string>
+    <string name="no">No</string>
+</resources>

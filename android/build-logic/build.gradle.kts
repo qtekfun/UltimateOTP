@@ -44,6 +44,7 @@ dependencies {
     compileOnly(libs.detekt.gradle.plugin)
     compileOnly(libs.ktlint.gradle.plugin)
     compileOnly(libs.licensee.gradle.plugin)
+    compileOnly(libs.kover.gradle.plugin)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)

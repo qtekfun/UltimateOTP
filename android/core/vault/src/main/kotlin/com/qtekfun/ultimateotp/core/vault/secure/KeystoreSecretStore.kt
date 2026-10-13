@@ -42,6 +42,17 @@ class KeystoreSecretStore(
         name: String,
         secret: ByteArray,
     ) {
+        val cipher = encryptCipher()
+        val ct = cipher.doFinal(secret)
+        file(name).writeBytes(byteArrayOf(cipher.iv.size.toByte()) + cipher.iv + ct)
+    }
+
+    /** Initialising a cipher is where the Keystore checks the authentication window. */
+    override fun checkUsable() {
+        encryptCipher()
+    }
+
+    private fun encryptCipher(): Cipher {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         try {
             cipher.init(Cipher.ENCRYPT_MODE, key())
@@ -50,8 +61,7 @@ class KeystoreSecretStore(
         } catch (e: KeyPermanentlyInvalidatedException) {
             throw KeyInvalidatedException(e)
         }
-        val ct = cipher.doFinal(secret)
-        file(name).writeBytes(byteArrayOf(cipher.iv.size.toByte()) + cipher.iv + ct)
+        return cipher
     }
 
     override fun get(name: String): ByteArray? {

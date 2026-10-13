@@ -16,18 +16,25 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Gavel
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.ManageAccounts
+import androidx.compose.material.icons.filled.Password
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
@@ -77,9 +84,19 @@ data class SettingsActions(
     val onExportEncrypted: () -> Unit = {},
     val onExportPlain: () -> Unit = {},
     val onImport: () -> Unit = {},
+    val onTrash: () -> Unit = {},
+    val onAccount: () -> Unit = {},
+    val onAutofillSettings: () -> Unit = {},
+    val onAutofillAssociations: () -> Unit = {},
+    val onShareLog: () -> Unit = {},
+    val onSaveLog: () -> Unit = {},
+    val onClearLog: () -> Unit = {},
 )
 
-private val LOCK_CHOICES = listOf(0, 30, 60, 300)
+private const val LOCK_NEVER = -1
+
+/** The stored values of core.support LockTimeout: seconds, -1 for never. */
+private val LOCK_CHOICES = listOf(0, 30, 60, 300, LOCK_NEVER)
 private val CLIPBOARD_CHOICES = listOf(10, 30, 60, 120)
 
 private enum class Picker { LOCK, CLIPBOARD, THEME, LANGUAGE }
@@ -94,6 +111,7 @@ fun SettingsContent(
     language: String,
     actions: SettingsActions,
     modifier: Modifier = Modifier,
+    autofillEnabled: Boolean = false,
 ) {
     var picker by rememberSaveable { mutableStateOf<Picker?>(null) }
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
@@ -126,8 +144,10 @@ fun SettingsContent(
             ) {
                 SecurityGroup(settings, actions) { picker = it }
                 SyncGroup(actions)
+                AutofillGroup(autofillEnabled, actions)
                 AppearanceGroup(settings, language, actions) { picker = it }
                 DataGroup(statusText, actions)
+                DiagnosticsGroup(actions)
                 AboutGroup(version)
             }
         }
@@ -250,6 +270,41 @@ private fun SyncGroup(actions: SettingsActions) {
             subtitle = stringResource(R.string.sessions_body),
             onClick = actions.onSessions,
         )
+        RowDivider()
+        SettingsRow(Icons.Filled.ManageAccounts, stringResource(R.string.account_settings), onClick = actions.onAccount)
+    }
+}
+
+@Composable
+private fun AutofillGroup(
+    enabled: Boolean,
+    actions: SettingsActions,
+) {
+    SettingsGroup(stringResource(R.string.section_autofill)) {
+        SettingsRow(
+            Icons.Filled.Password,
+            stringResource(R.string.autofill_enable),
+            subtitle = stringResource(if (enabled) R.string.autofill_state_on else R.string.autofill_state_off),
+            onClick = actions.onAutofillSettings,
+        )
+        RowDivider()
+        SettingsRow(Icons.Filled.Link, stringResource(R.string.autofill_associations), onClick = actions.onAutofillAssociations)
+    }
+}
+
+@Composable
+private fun DiagnosticsGroup(actions: SettingsActions) {
+    SettingsGroup(stringResource(R.string.section_diagnostics)) {
+        SettingsRow(
+            Icons.Filled.BugReport,
+            stringResource(R.string.diagnostics_share),
+            subtitle = stringResource(R.string.diagnostics_help),
+            onClick = actions.onShareLog,
+        )
+        RowDivider()
+        SettingsRow(Icons.Filled.Save, stringResource(R.string.diagnostics_save), onClick = actions.onSaveLog)
+        RowDivider()
+        SettingsRow(Icons.Filled.DeleteSweep, stringResource(R.string.diagnostics_clear), onClick = actions.onClearLog)
     }
 }
 
@@ -330,6 +385,8 @@ private fun DataGroup(
             subtitle = stringResource(R.string.import_file_body),
             onClick = actions.onImport,
         )
+        RowDivider()
+        SettingsRow(Icons.Filled.Delete, stringResource(R.string.trash), onClick = actions.onTrash)
         if (statusText != null) {
             RowDivider()
             SettingsRow(Icons.Filled.AdminPanelSettings, statusText)

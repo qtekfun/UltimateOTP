@@ -36,6 +36,8 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.qtekfun.ultimateotp.R
+import com.qtekfun.ultimateotp.auth.AuthGate
+import com.qtekfun.ultimateotp.auth.GateResult
 import com.qtekfun.ultimateotp.core.sync.model.VaultItem
 import com.qtekfun.ultimateotp.core.vault.VaultRepository
 import com.qtekfun.ultimateotp.ui.codes.parseTags
@@ -56,6 +58,7 @@ class EditViewModel
     @Inject
     constructor(
         private val vault: VaultRepository,
+        private val gate: AuthGate,
     ) : ViewModel() {
         val items: StateFlow<List<VaultItem>> = vault.items.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -63,16 +66,14 @@ class EditViewModel
             item: VaultItem,
             done: () -> Unit,
         ) = viewModelScope.launch {
-            vault.update(item)
-            done()
+            if (gate.attempt { vault.update(item) } is GateResult.Done) done()
         }
 
         fun delete(
             item: VaultItem,
             done: () -> Unit,
         ) = viewModelScope.launch {
-            vault.delete(item.id)
-            done()
+            if (gate.attempt { vault.delete(item.id) } is GateResult.Done) done()
         }
     }
 

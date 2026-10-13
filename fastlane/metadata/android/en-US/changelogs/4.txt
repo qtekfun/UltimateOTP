@@ -1,0 +1,1 @@
+Fixed: signing up and logging in crashed in release builds. New: show/hide on password fields and a button to copy the recovery words.

@@ -3,15 +3,28 @@
 """The FastAPI application.
 
 Middleware order, outermost first: `ClientAddress` (decides the client behind the proxy),
-`AccessLog`, `BodyLimit`, then FastAPI. No CORS: native apps only (a web client is a later
+`ClientIdentity` (anonymizes it, anon.py), `AccessLog`, `BlockGuard` (temporary blocks,
+blocking.py), `BodyLimit`, then FastAPI. No CORS: native apps only (a web client is a later
 milestone with its own origin policy, design §4.7). No OpenAPI UI: the contract is the file.
+A background task prunes the history and housekeeping tables every
+`UOTP_MAINTENANCE_INTERVAL_S`.
 """
 
+import asyncio
+import contextlib
+import logging
+import secrets
+import sqlite3
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
+from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from ultimateotp import __version__, errors
+from ultimateotp import __version__, anon, errors
 from ultimateotp.alerts import Alerts
+from ultimateotp.blocking import BlockGuard
 from ultimateotp.clock import Clock, SystemClock
 from ultimateotp.db import Database
 from ultimateotp.events import Broker
@@ -88,9 +101,36 @@ def build_limiter(settings: Settings, clock: Clock) -> RateLimiter:
             "email_address": Limit(
                 settings.email_address_per_hour / 3600, settings.email_address_burst
             ),
+            "account": Limit(
+                settings.account_action_per_hour / 3600, settings.account_action_burst
+            ),
+            "export": Limit(settings.export_per_hour / 3600, settings.export_burst),
+            "history": Limit(settings.history_rate_per_s, settings.history_burst),
         },
         clock,
     )
+
+
+log = logging.getLogger(__name__)
+
+
+async def _maintenance(service: Service, interval_s: float) -> None:
+    """Housekeeping loop: failures are logged and the loop goes on."""
+    while True:
+        await asyncio.sleep(interval_s)
+        try:
+            result = await run_in_threadpool(service.maintenance)
+            log.debug("maintenance: %s", result)
+        except Exception:
+            log.exception("maintenance failed")
+
+
+def _ip_secret(database: Database, settings: Settings, clock: Clock) -> bytes:
+    try:
+        return anon.load_secret(database, settings, clock)
+    except sqlite3.OperationalError:
+        # Not migrated yet (readyz answers 503 meanwhile): an ephemeral secret is fine for now.
+        return secrets.token_bytes(32)
 
 
 def create_app(
@@ -104,14 +144,30 @@ def create_app(
     metrics = Metrics()
     broker = Broker()
     metrics.gauge("uotp_sse_streams", lambda: float(broker.count()))
-    service = Service(
-        Database(settings.database_file),
-        settings,
-        clock,
-        broker,
-        metrics,
-        alerts or Alerts(settings),
-    )
+    metrics.gauge("uotp_build_info", lambda: 1.0, version=__version__)
+    database = Database(settings.database_file)
+    service = Service(database, settings, clock, broker, metrics, alerts or Alerts(settings))
+    for name, key in (
+        ("uotp_accounts", "accounts"),
+        ("uotp_devices_active", "devices_active"),
+        ("uotp_vault_items", "vault_items"),
+        ("uotp_history_versions", "history_versions"),
+        ("uotp_history_items", "history_items"),
+        ("uotp_history_bytes", "history_bytes"),
+        ("uotp_database_bytes", "database_bytes"),
+    ):
+        metrics.gauge(name, lambda key=key: float(service.storage_stats().get(key, 0)))
+    client_ids = anon.ClientIds(_ip_secret(database, settings, clock), clock)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        task = asyncio.create_task(_maintenance(service, settings.maintenance_interval_s))
+        try:
+            yield
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     app = FastAPI(
         title="UltimateOTP",
@@ -119,6 +175,7 @@ def create_app(
         openapi_url=None,
         docs_url=None,
         redoc_url=None,
+        lifespan=lifespan,
     )
     app.state.settings = settings
     app.state.service = service
@@ -128,7 +185,11 @@ def create_app(
     app.include_router(probes)
 
     asgi: ASGIApp = BodyLimit(app, settings.max_body_bytes)
-    asgi = AccessLog(asgi)
+    asgi = BlockGuard(asgi, service.blocker, metrics)
+    asgi = AccessLog(asgi, metrics)
+    asgi = anon.ClientIdentity(
+        asgi, client_ids, settings.lan_network_list, settings.denied_network_list
+    )
     asgi = ClientAddress(asgi, settings.proxy_networks)
     # Tests reach the FastAPI object (state, service) through this attribute.
     asgi.fastapi = app  # type: ignore[attr-defined]

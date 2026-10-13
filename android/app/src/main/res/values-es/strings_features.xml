@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 UltimateOTP contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<resources>
+    <!-- Bloqueo por inactividad -->
+    <string name="lock_choice_never">Nunca</string>
+
+    <!-- Autorrelleno -->
+    <string name="section_autofill">Autorrelleno</string>
+    <string name="autofill_state_on">UltimateOTP es el servicio de autorrelleno: ofrece códigos en los campos que piden uno.</string>
+    <string name="autofill_state_off">El autorrelleno está desactivado. Actívalo para que se ofrezcan códigos en otras apps y navegadores.</string>
+    <string name="autofill_enable">Ajustes de autorrelleno</string>
+    <string name="autofill_associations">Apps y sitios de cada cuenta</string>
+    <string name="autofill_associations_help">Un nombre de paquete o dominio por línea o separados por comas, por ejemplo com.example.app o example.com. También se prueba el emisor.</string>
+    <string name="autofill_save">Guardar</string>
+    <string name="autofill_unlock">Desbloquear UltimateOTP</string>
+    <string name="autofill_dataset">%1$s · toca para el código</string>
+    <string name="autofill_dataset_sub">%1$s</string>
+
+    <!-- Registro de errores -->
+    <string name="section_diagnostics">Registro de errores</string>
+    <string name="diagnostics_help">Se guarda solo en este teléfono: fallos y eventos recientes, sin códigos, secretos ni direcciones.</string>
+    <string name="diagnostics_share">Compartir registro de errores</string>
+    <string name="diagnostics_save">Guardar registro de errores</string>
+    <string name="diagnostics_clear">Borrar registro de errores</string>
+
+    <!-- Papelera -->
+    <string name="trash_empty">La papelera está vacía. Las cuentas eliminadas se conservan aquí 30 días.</string>
+    <string name="trash_restore">Restaurar</string>
+    <string name="trash_delete_forever">Eliminar para siempre</string>
+    <string name="trash_empty_all">Vaciar papelera</string>
+    <string name="trash_server_title">Eliminadas definitivamente, aún en el servidor</string>
+    <string name="trash_server_load">Buscar en el historial del servidor</string>
+    <string name="trash_server_none">No hay nada recuperable en el servidor.</string>
+
+    <!-- Cuenta -->
+    <string name="account_settings">Cuenta</string>
+    <string name="account_change_email">Cambiar correo</string>
+    <string name="account_sign_out_others">Cerrar sesión en los demás dispositivos</string>
+    <string name="account_export">Exportar todo lo que guarda el servidor</string>
+    <string name="account_delete">Eliminar cuenta</string>
+    <string name="account_confirm_delete">Esto elimina tu cuenta y todo lo guardado para ella en el servidor, para siempre. Tus cuentas de códigos permanecen en este teléfono como una bóveda sin conexión.</string>
+    <string name="account_confirm_others">Se cierra la sesión en todos los demás dispositivos y se cambia la clave de la bóveda.</string>
+    <string name="account_confirm_export">Guarda un archivo con los datos cifrados que tiene el servidor.</string>
+    <string name="account_confirm_email">Se envía un código a la nueva dirección.</string>
+    <string name="account_password">Contraseña de la cuenta</string>
+    <string name="account_email_code">Código recibido por correo</string>
+    <string name="account_send_code">Enviarme un código por correo</string>
+    <string name="account_new_email">Nueva dirección de correo</string>
+    <string name="account_continue">Continuar</string>
+    <string name="account_done_deleted">Cuenta eliminada.</string>
+    <string name="account_done_email">Correo cambiado a %1$s.</string>
+    <string name="account_done_others">Dispositivos desconectados: %1$d. Clave de la bóveda cambiada: %2$s.</string>
+    <string name="account_done_export">Exportación lista.</string>
+    <string name="account_problem">No se pudo hacer (%1$s). No se cambió nada.</string>
+    <string name="account_no_account">Este teléfono no ha iniciado sesión en una cuenta.</string>
+    <string name="yes">Sí</string>
+    <string name="no">No</string>
+</resources>

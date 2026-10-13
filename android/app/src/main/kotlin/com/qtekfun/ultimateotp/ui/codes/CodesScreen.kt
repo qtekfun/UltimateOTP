@@ -3,6 +3,9 @@
 
 package com.qtekfun.ultimateotp.ui.codes
 
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -10,17 +13,23 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.qtekfun.ultimateotp.R
+import com.qtekfun.ultimateotp.auth.AuthGate
+import com.qtekfun.ultimateotp.auth.GateResult
 import com.qtekfun.ultimateotp.core.otp.OtpGenerator
 import com.qtekfun.ultimateotp.core.sync.SyncResult
 import com.qtekfun.ultimateotp.core.sync.model.VaultItem
 import com.qtekfun.ultimateotp.core.vault.VaultRepository
+import com.qtekfun.ultimateotp.features.EntryOrderViewModel
 import com.qtekfun.ultimateotp.sync.SyncController
 import com.qtekfun.ultimateotp.sync.SyncStatus
 import com.qtekfun.ultimateotp.ui.components.currentWidthClass
@@ -45,6 +54,7 @@ class CodesViewModel
         private val clipboard: SecureClipboard,
         private val appSettings: AppSettings,
         private val sync: SyncController,
+        private val gate: AuthGate,
     ) : ViewModel() {
         val items: StateFlow<List<VaultItem>> = vault.items.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_MS), emptyList())
         val settings: StateFlow<Settings> = appSettings.settings.stateIn(viewModelScope, SharingStarted.Eagerly, Settings())
@@ -56,7 +66,7 @@ class CodesViewModel
         /** HOTP: advance the counter (stored first), then copy the new code. */
         fun nextHotp(id: UUID) =
             viewModelScope.launch {
-                val item = vault.nextHotpCounter(id) ?: return@launch
+                val item = (gate.attempt { vault.nextHotpCounter(id) } as? GateResult.Done)?.value ?: return@launch
                 clipboard.copy(OtpGenerator.code(item.otp, System.currentTimeMillis()))
             }
 
@@ -68,8 +78,6 @@ class CodesViewModel
             item: VaultItem,
             tags: List<String>,
         ) = viewModelScope.launch { vault.update(item.copy(otp = item.otp.copy(tags = tags))) }
-
-        fun delete(item: VaultItem) = viewModelScope.launch { vault.delete(item.id) }
 
         /** The app lock: forgets the keys now; the lock screen follows. */
         fun lock() = vault.lock()
@@ -100,7 +108,9 @@ fun CodesScreen(
     onEdit: (UUID) -> Unit,
     onSettings: () -> Unit,
     onSync: () -> Unit,
+    onTrash: () -> Unit,
     model: CodesViewModel = hiltViewModel(),
+    order: EntryOrderViewModel = hiltViewModel(),
 ) {
     val items by model.items.collectAsState()
     val settings by model.settings.collectAsState()
@@ -116,6 +126,10 @@ fun CodesScreen(
     var copiedId by remember { mutableStateOf<UUID?>(null) }
     var revealedId by remember { mutableStateOf<UUID?>(null) }
     val haptics = LocalHapticFeedback.current
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val trashedText = stringResource(R.string.moved_to_trash)
+    val undoText = stringResource(R.string.undo)
     val now by produceState(System.currentTimeMillis()) {
         while (true) {
             value = System.currentTimeMillis()
@@ -147,7 +161,7 @@ fun CodesScreen(
             sync = sync,
         )
     val actions =
-        remember(model, onAdd, onEdit, onSettings, onSync) {
+        remember(model, order, onAdd, onEdit, onSettings, onSync, onTrash, trashedText, undoText) {
             CodesActions(
                 onQuery = { query = it },
                 onSearching = {
@@ -194,7 +208,19 @@ fun CodesScreen(
                 onDelete = {
                     deleteId = null
                     menuId = null
-                    model.delete(it)
+                    order.delete(it.id)
+                    scope.launch {
+                        snackbar.currentSnackbarData?.dismiss()
+                        val result = snackbar.showSnackbar(trashedText, actionLabel = undoText, duration = SnackbarDuration.Long)
+                        if (result == SnackbarResult.ActionPerformed) order.undoDelete(it.id)
+                    }
+                },
+                onTrash = onTrash,
+                onReorder = { from, to ->
+                    val shown = order.entries.value
+                    val a = shown.indexOfFirst { it.id == from }
+                    val b = shown.indexOfFirst { it.id == to }
+                    if (a >= 0 && b >= 0) order.move(a, b)
                 },
                 onSettings = onSettings,
                 onSync = onSync,
@@ -202,5 +228,5 @@ fun CodesScreen(
                 onReveal = { revealedId = it },
             )
         }
-    CodesContent(items = items, now = now, ui = ui, on = actions, widthClass = currentWidthClass())
+    CodesContent(items = items, now = now, ui = ui, on = actions, widthClass = currentWidthClass(), snackbar = snackbar)
 }
