@@ -10,6 +10,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.test.core.app.ApplicationProvider
 import com.qtekfun.ultimateotp.R
+import com.qtekfun.ultimateotp.auth.AuthGate
 import com.qtekfun.ultimateotp.core.crypto.Sodium
 import com.qtekfun.ultimateotp.core.otp.OtpAuthUri
 import com.qtekfun.ultimateotp.core.sync.SyncEngine
@@ -65,7 +66,10 @@ class LoginUiTest(
         Host(rule) {
             val m =
                 viewModel<LoginViewModel>(
-                    factory = viewModelFactory { initializer { LoginViewModel(SrpEmailLogin(engine(), backend.apiFor), controller) } },
+                    factory =
+                        viewModelFactory {
+                            initializer { LoginViewModel(SrpEmailLogin(engine(), backend.apiFor), controller, AuthGate()) }
+                        },
                 )
             model = m
             LoginScreen(defaultServer = "", label = "Pixel", onBack = { done = true }, model = m)
@@ -84,7 +88,7 @@ class LoginUiTest(
                 .setDriver(androidx.sqlite.driver.AndroidSQLiteDriver())
                 .build()
         vault = VaultRepository(db.dao(), InMemorySecretStore())
-        controller = SyncController(context, vault, appScope)
+        controller = SyncController(context, vault, appScope, AuthGate())
         runBlocking {
             vault.create()
             // The first phone owns the account (a bootstrap with one entry).
