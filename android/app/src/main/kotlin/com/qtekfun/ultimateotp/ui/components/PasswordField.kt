@@ -3,9 +3,13 @@
 package com.qtekfun.ultimateotp.ui.components
 
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -19,7 +23,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import com.qtekfun.ultimateotp.R
 
 /**
- * A password field with a Show/Hide button, so a mistyped password can be checked before it encrypts
+ * A password field with a show/hide eye, so a mistyped password can be checked before it encrypts
  * everything. It starts hidden, and the choice survives a rotation or a fold/unfold.
  */
 @Composable
@@ -38,11 +42,15 @@ fun PasswordField(
         label = { Text(label) },
         isError = isError,
         singleLine = true,
+        shape = androidx.compose.material3.MaterialTheme.shapes.medium,
         visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         trailingIcon = {
-            TextButton(onClick = { visible = !visible }) {
-                Text(stringResource(if (visible) R.string.hide_password else R.string.show_password))
+            IconButton(onClick = { visible = !visible }) {
+                Icon(
+                    if (visible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                    contentDescription = stringResource(if (visible) R.string.hide_password else R.string.show_password),
+                )
             }
         },
     )
