@@ -1,0 +1,1 @@
+Novedad: crea tu cuenta desde la app en el primer arranque (correo, código por correo, contraseña y clave de recuperación de 24 palabras), inicia sesión o sigue usándola sin servidor.

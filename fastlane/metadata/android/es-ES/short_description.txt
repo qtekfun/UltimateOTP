@@ -1,0 +1,1 @@
+Autenticador 2FA con sincronización cifrada en tu propio servidor
