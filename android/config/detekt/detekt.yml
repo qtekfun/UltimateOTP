@@ -28,6 +28,10 @@ complexity:
     # A screen composable is one declarative tree; splitting it only moves the length around.
     ignoreAnnotated:
       - Composable
+  CyclomaticComplexMethod:
+    # A screen is one declarative tree with a branch per state; splitting it only moves the length.
+    ignoreAnnotated:
+      - Composable
   TooManyFunctions:
     # Format codecs and repositories group one small function per wire field or operation;
     # splitting them across files would scatter one format over several places.
@@ -36,8 +40,11 @@ complexity:
     thresholdInObjects: 25
     thresholdInInterfaces: 25
   LongParameterList:
-    # Composables expose many optional parameters with defaults; the contract's canonical request
-    # has six fields and is built in one call.
+    # Composables expose many optional parameters with defaults and one callback per intent (a
+    # stateless screen takes its state and its callbacks, which is the point); the contract's
+    # canonical request has six fields and is built in one call.
+    ignoreAnnotated:
+      - Composable
     ignoreDefaultParameters: true
     functionThreshold: 7
     # Room entities and their row models mirror the table columns one to one.
@@ -58,6 +65,9 @@ style:
     # Named constants and property declarations (parameter tables) are the definition itself.
     ignorePropertyDeclaration: true
     ignoreEnums: true
+    # dp and sp literals of a layout are the layout.
+    ignoreAnnotated:
+      - Composable
     # detekt's default test exclusions, plus color and typography tokens,
     # which are literal values by nature.
     excludes:

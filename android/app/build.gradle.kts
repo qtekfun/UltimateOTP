@@ -70,6 +70,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.core)
+    implementation(libs.androidx.compose.material.icons.extended)
+    implementation(libs.androidx.core.splashscreen)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     implementation(libs.androidx.navigation.compose)
@@ -90,6 +92,18 @@ dependencies {
     testImplementation(libs.junit4)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
+    // Screenshots of the screens on the JVM (Robolectric native graphics); test scope only.
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(testFixtures(project(":core:sync")))
+}
+
+// The screen screenshots (src/test/.../screenshots) are written on every test run, to
+// build/screenshots, for review; they are not compared against goldens (fonts differ per host).
+tasks.withType<Test>().configureEach {
+    systemProperty("roborazzi.test.record", "true")
 }
