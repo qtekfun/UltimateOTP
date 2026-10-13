@@ -15,7 +15,7 @@ Binaries: https://github.com/qtekfun/UltimateOTP/releases/download/v%v/UltimateO
 Builds:
   - versionName: 0.2.0
     versionCode: 4
-    commit: deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+    commit: d335cc3d83ee329c3b9f7a7248f1caad96ed2579
     subdir: android/app
     sudo:
       - apt-get update
