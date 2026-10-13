@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 UltimateOTP contributors
+  SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<resources>
+    <string name="auth_notice_ok">OK</string>
+    <string name="auth_cancelled">You did not confirm it is you, so nothing was changed. Try again when you are ready.</string>
+    <string name="auth_key_lost">This phone\'s secure storage key was reset, for example after the screen lock was removed. The saved vault key cannot be read. Restore your entries by logging in to your account, or by importing an export file.</string>
+    <string name="auth_failed">Something went wrong and the action was not completed. Your entries are unchanged.</string>
+    <string name="problem_unexpected">Something went wrong on this phone. Please try again.</string>
+</resources>

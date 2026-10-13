@@ -234,6 +234,7 @@ private fun failureText(reason: SyncStep.Reason): Int =
         SyncStep.Reason.REFUSED -> R.string.fail_refused
         SyncStep.Reason.SERVER -> R.string.fail_server
         SyncStep.Reason.LOGIN_UNAVAILABLE -> R.string.login_unavailable
+        SyncStep.Reason.UNEXPECTED -> R.string.problem_unexpected
     }
 
 private fun doneText(kind: SyncStep.DoneKind): Int =

@@ -341,6 +341,8 @@ class VaultRepository(
 
     override fun deviceKeys(): DeviceKeys = device ?: error("no device keys")
 
+    override suspend fun ensureWritable() = secrets.checkUsable()
+
     override suspend fun saveDeviceKeys(keys: DeviceKeys) {
         val secret = keys.exportSecrets()
         secrets.put(DEVICE_KEYS, secret)

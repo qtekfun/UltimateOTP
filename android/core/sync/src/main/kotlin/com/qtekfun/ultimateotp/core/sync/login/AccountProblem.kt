@@ -40,6 +40,9 @@ sealed interface AccountProblem {
     /** No answer from the server (no network, wrong URL, timeout): retry. */
     data object Network : AccountProblem
 
+    /** Something failed on this device that no server answer explains (a bug, a full disk). */
+    data object Unexpected : AccountProblem
+
     /** Any other problem code. */
     data class Server(
         val code: String,
