@@ -333,7 +333,6 @@ class RealServerContractTest {
      * meets `srp_failed`, which the app shows as "wrong password". A correct password on a phone
      * whose clock is more than 60 s off can never log in.
      */
-    @Disabled("KNOWN BUG KB-2: SRP login with a skewed clock consumes the session before the timestamp check (docs/testing.md)")
     @Test
     fun `password login works on a phone whose clock is an hour off`(): Unit =
         runBlocking {

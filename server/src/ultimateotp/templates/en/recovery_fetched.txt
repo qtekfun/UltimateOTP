@@ -1,0 +1,5 @@
+Subject: UltimateOTP: recovery data fetched
+
+A new device fetched your password and recovery-key wraps with an enrollment token (the password or recovery-key path).
+
+If this was not you, revoke the devices you do not recognize and change your password.

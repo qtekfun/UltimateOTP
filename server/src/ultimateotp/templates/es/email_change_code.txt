@@ -1,0 +1,7 @@
+Subject: Confirma tu nuevo correo electrónico en UltimateOTP
+
+Tu código de confirmación de UltimateOTP es $code.
+
+Introdúcelo en la aplicación para que esta dirección sea la de acceso a tu cuenta. Caduca en $minutes minutos y solo sirve una vez.
+
+Si no lo has pedido tú, ignora este mensaje: no cambia nada hasta que se introduzca el código.
