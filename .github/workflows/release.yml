@@ -1,0 +1,149 @@
+# SPDX-FileCopyrightText: 2026 UltimateOTP contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Release of the Android app (see RELEASING.md).
+# - Tag vX.Y.Z or vX.Y.Z-rc.N (push): checks the tag against the app's versionName, runs the checks,
+#   builds and verifies the signed APK, then publishes a GitHub Release with
+#   `UltimateOTP-X.Y.Z.apk` and its SHA-256. 0.x versions and -rc tags are pre-releases.
+# - Manual dispatch: a dry run that builds and checks everything and publishes nothing. Without the
+#   signing secrets the dry-run APK is unsigned.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Version and mode
+        id: v
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          version=$(sed -nE 's/^ *versionName = "([^"]+)".*/\1/p' android/app/build.gradle.kts)
+          test -n "$version" || { echo "::error::No versionName in android/app/build.gradle.kts"; exit 1; }
+          if [[ "$EVENT" == push && "$REF_TYPE" == tag ]]; then
+            publish=true
+            test "v$version" = "$GITHUB_REF_NAME" \
+              || { echo "::error::Tag $GITHUB_REF_NAME does not match versionName $version"; exit 1; }
+          else
+            publish=false
+            echo "::notice::Dry run of $version: builds and checks everything, publishes nothing"
+          fi
+          case "$version" in 0.* | *-*) prerelease=true ;; *) prerelease=false ;; esac
+          { echo "version=$version"; echo "prerelease=$prerelease"; echo "publish=$publish"; } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      # android/app/build.gradle.kts signs the release build when UOTP_KEYSTORE_FILE is set.
+      - name: Check and build the release APK
+        working-directory: android
+        env:
+          UOTP_KEYSTORE_BASE64: ${{ secrets.UOTP_KEYSTORE_BASE64 }}
+          UOTP_KEYSTORE_PASSWORD: ${{ secrets.UOTP_KEYSTORE_PASSWORD }}
+          UOTP_KEY_ALIAS: ${{ secrets.UOTP_KEY_ALIAS }}
+          UOTP_KEY_PASSWORD: ${{ secrets.UOTP_KEY_PASSWORD }}
+          PUBLISH: ${{ steps.v.outputs.publish }}
+        run: |
+          if [[ -n "$UOTP_KEYSTORE_BASE64" ]]; then
+            export UOTP_KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
+            trap 'rm -f "$UOTP_KEYSTORE_FILE"' EXIT
+            (umask 077 && base64 -d <<< "$UOTP_KEYSTORE_BASE64" > "$UOTP_KEYSTORE_FILE")
+          elif [[ "$PUBLISH" == true ]]; then
+            echo "::error::Missing signing secrets (UOTP_KEYSTORE_BASE64, see RELEASING.md)"; exit 1
+          else
+            echo "::warning::Dry run without signing secrets: the APK is unsigned"
+          fi
+          ./gradlew check assembleRelease
+
+      # The default `bash -e` has no pipefail: commands that must fail the step are not piped.
+      - name: Verify, name and hash the APK
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          PUBLISH: ${{ steps.v.outputs.publish }}
+        run: |
+          out=android/app/build/outputs/apk/release
+          ls -l "$out"
+          bt=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          if [[ -f "$out/app-release.apk" ]]; then
+            src="$out/app-release.apk"
+            certs=$("$bt/apksigner" verify --print-certs "$src")
+            { echo '```'; grep -v WARNING <<< "$certs" || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$PUBLISH" != true && -f "$out/app-release-unsigned.apk" ]]; then
+            src="$out/app-release-unsigned.apk"
+          else
+            echo "::error::No signed release APK in $out"; exit 1
+          fi
+          badging=$("$bt/aapt2" dump badging "$src")
+          head -n 1 <<< "$badging"
+          [[ "$badging" == *"versionName='$VERSION'"* ]] \
+            || { echo "::error::The APK is not version $VERSION"; exit 1; }
+          apk="UltimateOTP-$VERSION.apk"
+          cp "$src" "$apk"
+          sha256sum "$apk" > "$apk.sha256"
+          cat "$apk.sha256" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: apk
+          path: UltimateOTP-*.apk*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: apk
+    if: needs.apk.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: apk
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.apk.outputs.version }}
+          PRERELEASE: ${{ needs.apk.outputs.prerelease }}
+        run: |
+          apk="UltimateOTP-$VERSION.apk"
+          sha256sum -c "$apk.sha256"
+          cat > notes.md <<EOF
+          UltimateOTP $VERSION.
+
+          Early development, **not audited**: do not use it for real 2FA secrets yet. It works offline on
+          its own; sync needs a self-hosted UltimateOTP server (see docs/deploy.md).
+
+          SHA-256: \`$(cut -d' ' -f1 "$apk.sha256")\`
+          EOF
+          if [[ "$PRERELEASE" == true ]]; then flag=--prerelease; else flag=--latest; fi
+          gh release create "$GITHUB_REF_NAME" "$apk" "$apk.sha256" --verify-tag \
+            --title "UltimateOTP $VERSION" --notes-file notes.md "$flag"
