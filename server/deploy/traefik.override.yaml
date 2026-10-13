@@ -1,0 +1,125 @@
+# SPDX-FileCopyrightText: 2026 UltimateOTP contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# UltimateOTP behind Cloudflare Tunnel -> Traefik v3, on a dedicated `otp-proxy` network
+# (the pattern of UltimateTunes' ut-proxy; docs/deploy.md explains every line).
+#   docker compose -f compose.yaml -f traefik.override.yaml up -d
+services:
+  api:
+    # Traefik-only: nothing published on the host. (Keep a loopback port instead if you want
+    # `curl 127.0.0.1:8047/readyz` from the host.)
+    ports: !reset []
+    environment:
+      # X-Forwarded-For is believed only from Traefik's pinned otp-proxy address (the TCP peer)
+      # and cloudflared (it appends the real client), read right to left.
+      UOTP_TRUSTED_PROXIES: ${UOTP_TRUSTED_PROXIES:?set UOTP_TRUSTED_PROXIES}
+      # The owner's LAN /24 and tailnet only. NEVER 172.16.0.0/12 or any Docker range.
+      UOTP_LAN_NETWORKS: ${UOTP_LAN_NETWORKS:?set UOTP_LAN_NETWORKS}
+      # Defence in depth: nothing on the proxy network itself is ever "LAN".
+      UOTP_DENIED_NETWORKS: ${UOTP_PROXY_SUBNET:-10.213.49.0/24}
+      # Password login from anywhere (otp-login router); tokens and pairing LAN-only
+      # (otp-enroll router). Flip UOTP_PAIRING_SCOPE together with that router.
+      UOTP_ENROLLMENT_SCOPE: ${UOTP_ENROLLMENT_SCOPE:-anywhere}
+      UOTP_PAIRING_SCOPE: ${UOTP_PAIRING_SCOPE:-lan}
+    networks:
+      otp-proxy:
+        aliases: [ultimateotp-api]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: otp-proxy
+      traefik.http.services.ultimateotp.loadbalancer.server.port: "8047"
+
+      # ---- middlewares (crowdsec-bouncer@file and global-security-headers@file come from the
+      #      websecure entrypoint). Client = last X-Forwarded-For entry (cloudflared appends the
+      #      client Cloudflare saw), IPv6 grouped by /64, as the api does.
+      traefik.http.middlewares.otp-ratelimit.ratelimit.average: "10"
+      traefik.http.middlewares.otp-ratelimit.ratelimit.period: 1s
+      traefik.http.middlewares.otp-ratelimit.ratelimit.burst: "50"
+      traefik.http.middlewares.otp-ratelimit.ratelimit.sourcecriterion.ipstrategy.depth: "1"
+      traefik.http.middlewares.otp-ratelimit.ratelimit.sourcecriterion.ipstrategy.ipv6subnet: "64"
+      traefik.http.middlewares.otp-write-ratelimit.ratelimit.average: "5"
+      traefik.http.middlewares.otp-write-ratelimit.ratelimit.period: 1s
+      traefik.http.middlewares.otp-write-ratelimit.ratelimit.burst: "20"
+      traefik.http.middlewares.otp-write-ratelimit.ratelimit.sourcecriterion.ipstrategy.depth: "1"
+      traefik.http.middlewares.otp-write-ratelimit.ratelimit.sourcecriterion.ipstrategy.ipv6subnet: "64"
+      traefik.http.middlewares.otp-enroll-ratelimit.ratelimit.average: "1"
+      traefik.http.middlewares.otp-enroll-ratelimit.ratelimit.period: 1s
+      traefik.http.middlewares.otp-enroll-ratelimit.ratelimit.burst: "5"
+      traefik.http.middlewares.otp-enroll-ratelimit.ratelimit.sourcecriterion.ipstrategy.depth: "1"
+      traefik.http.middlewares.otp-enroll-ratelimit.ratelimit.sourcecriterion.ipstrategy.ipv6subnet: "64"
+      # Password login (email code, SRP, sign-up): public, so strict. A full login is 4 requests.
+      traefik.http.middlewares.otp-login-ratelimit.ratelimit.average: "6"
+      traefik.http.middlewares.otp-login-ratelimit.ratelimit.period: 1m
+      traefik.http.middlewares.otp-login-ratelimit.ratelimit.burst: "8"
+      traefik.http.middlewares.otp-login-ratelimit.ratelimit.sourcecriterion.ipstrategy.depth: "1"
+      traefik.http.middlewares.otp-login-ratelimit.ratelimit.sourcecriterion.ipstrategy.ipv6subnet: "64"
+      # Live-sync streams reconnect every hour or after errors: a few per minute is plenty.
+      traefik.http.middlewares.otp-events-ratelimit.ratelimit.average: "6"
+      traefik.http.middlewares.otp-events-ratelimit.ratelimit.period: 1m
+      traefik.http.middlewares.otp-events-ratelimit.ratelimit.burst: "10"
+      traefik.http.middlewares.otp-events-ratelimit.ratelimit.sourcecriterion.ipstrategy.depth: "1"
+      traefik.http.middlewares.otp-events-ratelimit.ratelimit.sourcecriterion.ipstrategy.ipv6subnet: "64"
+      # Concurrent requests per client; each open event stream holds one.
+      traefik.http.middlewares.otp-inflight.inflightreq.amount: "8"
+      traefik.http.middlewares.otp-inflight.inflightreq.sourcecriterion.ipstrategy.depth: "1"
+      traefik.http.middlewares.otp-inflight.inflightreq.sourcecriterion.ipstrategy.ipv6subnet: "64"
+      traefik.http.middlewares.otp-inflight-enroll.inflightreq.amount: "4"
+      traefik.http.middlewares.otp-inflight-enroll.inflightreq.sourcecriterion.ipstrategy.depth: "1"
+      traefik.http.middlewares.otp-inflight-enroll.inflightreq.sourcecriterion.ipstrategy.ipv6subnet: "64"
+      # Bodies up to 4.5 MB (the api refuses more than 4 MiB itself). Never on the event stream.
+      traefik.http.middlewares.otp-body-limit.buffering.maxrequestbodybytes: "4500000"
+      traefik.http.middlewares.otp-body-limit.buffering.memrequestbodybytes: "1048576"
+
+      # ---- routers (Host = UOTP_PUBLIC_HOST) -------------------------------------------------
+      # Enrollment tokens and pairing: LAN only (local-ip-whitelist@file checks the TCP peer, so the
+      # tunnel, whose peer is cloudflared, never passes), then strict limits. The api checks the
+      # LAN again with the resolved client (UOTP_PAIRING_SCOPE). To allow pairing or tokens while
+      # travelling, remove local-ip-whitelist@file here AND set UOTP_PAIRING_SCOPE=anywhere
+      # (password login already works from anywhere through otp-login).
+      traefik.http.routers.otp-enroll.entrypoints: websecure
+      traefik.http.routers.otp-enroll.tls.certresolver: cloudflare
+      traefik.http.routers.otp-enroll.rule: Host(`${UOTP_PUBLIC_HOST}`) && (Path(`/otp/v1/enroll`) || Path(`/otp/v1/recovery/keys`) || PathRegexp(`^/otp/v1/pairings/[^/]+/(join|result)$`))
+      traefik.http.routers.otp-enroll.priority: "300"
+      traefik.http.routers.otp-enroll.middlewares: local-ip-whitelist@file,otp-enroll-ratelimit,otp-inflight-enroll,otp-body-limit
+      traefik.http.routers.otp-enroll.service: ultimateotp
+
+      # Password login from anywhere (decision 6): public, rate-limited here, in the api (per
+      # client, per address for emails) and by the per-account SRP lockout.
+      traefik.http.routers.otp-login.entrypoints: websecure
+      traefik.http.routers.otp-login.tls.certresolver: cloudflare
+      traefik.http.routers.otp-login.rule: Host(`${UOTP_PUBLIC_HOST}`) && Method(`POST`) && PathRegexp(`^/otp/v1/(srp/(attributes|session|verify)|login/email-code|signup)$`)
+      traefik.http.routers.otp-login.priority: "300"
+      traefik.http.routers.otp-login.middlewares: no-bots-headers@file,otp-login-ratelimit,otp-inflight-enroll,otp-body-limit
+      traefik.http.routers.otp-login.service: ultimateotp
+
+      # Live sync (SSE): no buffering middleware, or events would wait for the stream to end.
+      traefik.http.routers.otp-events.entrypoints: websecure
+      traefik.http.routers.otp-events.tls.certresolver: cloudflare
+      traefik.http.routers.otp-events.rule: Host(`${UOTP_PUBLIC_HOST}`) && Path(`/otp/v1/events`) && Method(`GET`)
+      traefik.http.routers.otp-events.priority: "250"
+      traefik.http.routers.otp-events.middlewares: otp-events-ratelimit,otp-inflight
+      traefik.http.routers.otp-events.service: ultimateotp
+
+      # Writes (commits, rotation, pairing approval, revocation): buffered and capped.
+      traefik.http.routers.otp-write.entrypoints: websecure
+      traefik.http.routers.otp-write.tls.certresolver: cloudflare
+      traefik.http.routers.otp-write.rule: Host(`${UOTP_PUBLIC_HOST}`) && PathPrefix(`/otp/v1/`) && !Method(`GET`) && !Method(`HEAD`)
+      traefik.http.routers.otp-write.priority: "200"
+      traefik.http.routers.otp-write.middlewares: no-bots-headers@file,otp-write-ratelimit,otp-inflight,otp-body-limit
+      traefik.http.routers.otp-write.service: ultimateotp
+
+      # Reads. No Authelia on any API route (native app, device signatures). /healthz, /readyz
+      # and /metrics match no router: Traefik answers 404 for them.
+      traefik.http.routers.otp-client.entrypoints: websecure
+      traefik.http.routers.otp-client.tls.certresolver: cloudflare
+      traefik.http.routers.otp-client.rule: Host(`${UOTP_PUBLIC_HOST}`) && PathPrefix(`/otp/v1/`)
+      traefik.http.routers.otp-client.priority: "100"
+      traefik.http.routers.otp-client.middlewares: no-bots-headers@file,otp-ratelimit,otp-inflight
+      traefik.http.routers.otp-client.service: ultimateotp
+
+networks:
+  # Dedicated proxy bridge shared ONLY with Traefik (docs/deploy.md, step 1):
+  #   docker network create --subnet 10.213.49.0/24 --ip-range 10.213.49.128/25 otp-proxy
+  otp-proxy:
+    name: otp-proxy
+    external: true

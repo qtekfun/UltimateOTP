@@ -1,0 +1,1394 @@
+# SPDX-FileCopyrightText: 2026 UltimateOTP contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Maintained by hand. Every example uses invented data only.
+openapi: 3.1.0
+info:
+  title: UltimateOTP sync API
+  version: 1.1.0
+  license:
+    name: GPL-3.0-or-later
+    identifier: GPL-3.0-or-later
+  description: |
+    The `/otp/v1` API of the UltimateOTP server: a dumb, versioned store of end-to-end encrypted blobs
+    with device-key authentication and live change notifications (docs/design.md §4, docs/decisions.md).
+
+    **Contract version 1.1.0.** Breaking changes get a new path prefix (`/otp/v2`); within `/otp/v1` fields
+    are only added, never renamed or removed, and clients must ignore unknown response fields, unknown
+    SSE event types and unknown values of `enrolled_via`.
+
+    Changes in 1.1.0 (owner decisions 6-13, "as close to Ente Auth as possible"), all additive:
+    password login from anywhere with an emailed code and SRP-6a (`/login/email-code`, `/srp/*`), optional
+    public sign-up (`/signup`, off by default), the SRP record in `KeyBundle.srp`, session metadata
+    (`/sessions`, `X-UOTP-App-Version`, `Device.app_version`), `email_code` on bootstrap enrollment, new
+    `enrolled_via` values `password` and `signup`, new problem codes.
+
+    ## Conventions
+    - JSON, UTF-8, `snake_case` field names.
+    - **Binary values are base64url without padding** (RFC 4648 §5, alphabet `A-Z a-z 0-9 - _`, no `=`).
+      The server never decodes the *meaning* of a blob: it only checks the encoding and the length. Every
+      blob, wrap and KDF parameter set is opaque to the server; their formats live in
+      `docs/crypto-format.md` (owned by the Android work). Lengths checked (crypto-format v1 §12, `400
+      invalid_request` otherwise): `password_kdf` 29 bytes, `password_wrap` 73 or 146, `recovery_wrap` 73,
+      `sealed_vault_key` 123, item `blob` 45 + 256·k bytes with 1 <= k <= 240.
+    - Times: integers, Unix seconds (UTC).
+    - Ids: `account_id` = `acc_` + 22 base64url chars, `device_id` = `dev_` + 22, `pairing_id` = `pair_` + 22,
+      all random and server-assigned. `item_id` is chosen by the client: a lowercase canonical UUID
+      (random, v4 recommended), so concurrent adds on two devices never collide.
+    - Errors are RFC 9457 problem documents (`application/problem+json`) with a stable `code` (see
+      `Problem`). Clients branch on `code`, never on `title` or `detail`.
+
+    ## Authentication
+    There are no passwords and no bearer sessions. Three kinds of caller:
+
+    1. **Registered device** (`deviceSignature`). Every request carries four headers:
+       `X-UOTP-Device` (the `device_id`), `X-UOTP-Timestamp` (Unix seconds, decimal), `X-UOTP-Nonce`
+       (16 to 32 random bytes, base64url) and `X-UOTP-Signature` (Ed25519, 64 bytes, base64url) over the
+       **canonical request**, the UTF-8 bytes of these seven lines joined by `\n` (no trailing newline):
+       ```
+       UOTP-REQ-v1
+       <METHOD, upper case>
+       <path exactly as sent, plus "?" and the raw query string when there is one>
+       <X-UOTP-Device value>
+       <X-UOTP-Timestamp value>
+       <X-UOTP-Nonce value>
+       <base64url(SHA-256(raw body bytes))>   (the hash of the empty string when there is no body)
+       ```
+       The server refuses (401) a timestamp more than **60 s** away from its clock (`stale_request`, the
+       problem carries `server_time` so a client can correct its offset), a nonce it has already seen from
+       that device within the window (`replayed_request`), an unknown device or a bad signature
+       (`invalid_signature`, one generic code), and a revoked device whose signature is otherwise valid
+       (`device_revoked`: the app should wipe its server state and offer to re-enroll).
+    2. **New device** (enrollment and pairing routes). `Authorization: Bearer <token>` with an enrollment
+       token (`uoe_` + 43 chars) or a pairing secret (`uop_` + 43 chars), **plus** the same four signature
+       headers as proof of possession of the new device key: `X-UOTP-Device` is the literal `pending` (or
+       the pending `device_id` on `GET /otp/v1/pairings/{pairing_id}/result`) and the verifying key is the
+       `ed25519_public_key` of the request body (or of the pairing).
+    3. **Anyone**: `GET /otp/v1/server-info`, and the password-login routes below, which carry their own
+       proofs (emailed code, SRP).
+
+    Any signed request may also carry `X-UOTP-App-Version` (1-64 printable ASCII characters, not signed):
+    the server keeps it, with the client address and the time, as session metadata (`GET /otp/v1/sessions`).
+
+    ## Password login from anywhere (SRP-6a + emailed code, decisions 6 and 13)
+    The account identifier is its email address (lower case). A new or reinstalled device:
+    1. `POST /otp/v1/srp/attributes {email}` -> `srp_user_id`, `srp_salt`, `password_kdf`, `email_code_required`.
+       Unknown addresses get deterministic decoy values, so this does not reveal who has an account.
+    2. If `email_code_required`: `POST /otp/v1/login/email-code {email}` (always 202). The 6-digit code is valid
+       10 minutes, works once, and allows 5 wrong tries.
+    3. Derives `KEK_pw` with Argon2id from `password_kdf` (crypto-format §4.1), then the **login subkey**
+       (crypto-format v1.1 §4.4, Ente's construction: the first 16 bytes of
+       `crypto_kdf_derive_from_key(32, 1, "loginctx", KEK_pw)`), which is the SRP password `P`, never the KEK.
+    4. `POST /otp/v1/srp/session {email, srp_a, email_code}` -> `session_id`, `srp_b` (valid 5 minutes, single use).
+    5. `POST /otp/v1/srp/verify {session_id, srp_m1, device}` with the proof-of-possession headers of a new device
+       (`X-UOTP-Device: pending`) -> `srp_m2` (the client checks it: the server knew the verifier), the
+       registered device, the head and the key attributes (`password_wrap`, `password_kdf`, `recovery_wrap`). The
+       device then unwraps the vault key locally and signs every later request.
+
+    SRP-6a parameters: the RFC 5054 4096-bit group (the RFC 3526 prime, g = 5), H = SHA-256, `PAD(x)` = big-endian
+    left-padded to 512 bytes; `I` = the ASCII of `srp_user_id`, `s` = the salt bytes, `P` = the login subkey bytes.
+    ```
+    k = H(N | PAD(g))            x = H(s | H(I | ":" | P))      v = g^x mod N   (client, at setup)
+    A = g^a mod N                B = (k*v + g^b) mod N           u = H(PAD(A) | PAD(B)), refused when 0
+    S = (B - k*g^x)^(a + u*x)    K = H(PAD(S))
+    M1 = H((H(N) xor H(PAD(g))) | H(I) | s | PAD(A) | PAD(B) | K)          M2 = H(PAD(A) | M1 | K)
+    ```
+    `srp_a`, `srp_b` and `srp_verifier` travel as base64url of `PAD(value)` (512 bytes); `srp_m1`, `srp_m2` are 32
+    bytes. The client creates the SRP record (`KeyBundle.srp`: a random UUID `srp_user_id`, a random salt of 16+
+    bytes, the verifier) at bootstrap or sign-up and again on every password change; the server stores only
+    that. A key bundle without `password_wrap` removes the record (no password login).
+
+    Limits: per client address on every login route, per address and per destination on emails, and per
+    account: after 5 consecutive wrong SRP proofs the account refuses `/srp/session` for 60 s, doubling with
+    each further failure up to 24 h (`429 account_locked` with `retry_after`). Failures, lockouts and logins
+    are security events, and ntfy notifications go to the owner.
+
+    ## Network policy
+    - Enrollment tokens and pairing (`POST /otp/v1/enroll`, `GET /otp/v1/recovery/keys`,
+      `POST /otp/v1/pairings/{pairing_id}/join`, `GET /otp/v1/pairings/{pairing_id}/result`) are **LAN-only by
+      default** (`UOTP_PAIRING_SCOPE=lan`): callers outside `UOTP_LAN_NETWORKS` get `403
+      enrollment_network_denied`.
+    - Password login and sign-up (`/login/email-code`, `/srp/*`, `/signup`) work **from anywhere by default**
+      (`UOTP_ENROLLMENT_SCOPE=anywhere`, decision 6).
+    - Sign-up is off by default (`UOTP_SIGNUP=disabled`, `403 signup_disabled`): accounts come from the CLI.
+    - Every other route works from anywhere.
+
+    ## Vault model, optimistic concurrency and anti-rollback
+    One vault per account (`vault_id` = `account_id`). The server keeps a single monotonic `version` and a
+    `key_epoch`. Each item row stores the vault `version` of the commit that last changed it.
+
+    A commit sends `base_version`; the server applies it atomically only when `base_version` equals the
+    current version (otherwise `409 version_conflict` with the current head: pull, merge client-side, retry).
+    The new version is always `base_version + 1`, and the commit carries a **signed head** for that version:
+    ```
+    signature = Ed25519(device key, UTF-8 of these six lines joined by "\n"):
+      UOTP-HEAD-v1
+      <account_id>
+      <version>
+      <key_epoch>
+      <signed_by device_id>
+      <base64url(SHA-256(manifest))>
+    manifest = concatenation, over every LIVE item (not deleted) of the vault AFTER the commit, sorted by
+               item_id (byte order), of: <item_id> ":" <item version> ":" <base64url(SHA-256(blob bytes))> "\n"
+               (the empty string for an empty vault)
+    ```
+    The server recomputes the manifest and refuses a head whose signature does not verify with the
+    committing device's key (`400 invalid_head_signature`). **Clients are the real rollback defence**: each
+    device stores the highest `version` it has accepted and refuses any head that is lower, that is not
+    signed by a device in its pinned device set, or whose manifest does not match the items it holds.
+
+    ## Live sync
+    `GET /otp/v1/events` is a Server-Sent Events stream (docs/sync.md explains why SSE). Events are
+    notifications only, never data: on `vault` the client pulls `GET /otp/v1/vault?since=<its version>`.
+servers:
+  - url: https://otp.example.invalid
+    description: Your own server (behind your reverse proxy)
+tags:
+  - name: meta
+  - name: enrollment
+  - name: login
+  - name: account
+  - name: devices
+  - name: pairing
+  - name: vault
+  - name: events
+  - name: health
+security:
+  - deviceSignature: []
+paths:
+  /otp/v1/server-info:
+    get:
+      tags: [meta]
+      operationId: getServerInfo
+      summary: API version and the server clock (for signature skew)
+      security: []
+      responses:
+        '200':
+          description: Server information
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ServerInfo'}
+
+  /otp/v1/enroll:
+    post:
+      tags: [enrollment]
+      operationId: enrollDevice
+      summary: Register a new device with an enrollment token (LAN-only by default)
+      description: |
+        Consumes the enrollment token (single use) and registers the device.
+        - **Account bootstrap** (the account has no key bundle yet: a token from `ultimateotp account-create`):
+          `keys` is required and becomes key epoch 1. The vault starts empty at version 0.
+        - **Password or recovery-key path** (the account has keys): the device first fetched the wraps with
+          `GET /otp/v1/recovery/keys` and unwrapped the vault key locally; `keys` must be absent.
+
+        Signature headers: `X-UOTP-Device: pending`, verified with `ed25519_public_key` from the body.
+      security:
+        - enrollmentToken: []
+          pendingDeviceSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EnrollRequest'}
+      responses:
+        '201':
+          description: Device registered
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EnrollResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '413': {$ref: '#/components/responses/TooLarge'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/recovery/keys:
+    get:
+      tags: [enrollment]
+      operationId: getRecoveryKeys
+      summary: Fetch the password and recovery wraps with an enrollment token (LAN-only by default)
+      description: |
+        For a new or reinstalled device with no other device at hand (design §3.4 step 4). The token is not
+        consumed (enroll with it next) but each token allows at most 5 fetches. Logged as the security event
+        `recovery.keys_fetched` and rate-limited hard. A token whose account has no key bundle yet gets
+        `404 not_found`.
+      security:
+        - enrollmentToken: []
+      responses:
+        '200':
+          description: The current wraps, opaque to the server
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecoveryKeys'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/login/email-code:
+    post:
+      tags: [login]
+      operationId: requestEmailCode
+      summary: Email a 6-digit login code (always 202, whether or not the address has an account)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EmailRequest'}
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Accepted'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/srp/attributes:
+    post:
+      tags: [login]
+      operationId: getSrpAttributes
+      summary: SRP identity, salt and Argon2id parameters of an account (decoys for unknown addresses)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EmailRequest'}
+      responses:
+        '200':
+          description: Attributes
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SrpAttributes'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/srp/session:
+    post:
+      tags: [login]
+      operationId: startSrpSession
+      summary: Check the emailed code (when required) and start an SRP handshake
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SrpSessionRequest'}
+      responses:
+        '200':
+          description: The server's public value
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SrpSession'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/srp/verify:
+    post:
+      tags: [login]
+      operationId: verifySrpSession
+      summary: Prove the password, register this device and receive the wrapped vault key
+      description: |
+        Signature headers with `X-UOTP-Device: pending`, verified with `device.ed25519_public_key`. A wrong
+        proof is `401 srp_failed` (counted toward the account lockout); the session is consumed either way.
+      security:
+        - pendingDeviceSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SrpVerifyRequest'}
+      responses:
+        '201':
+          description: Logged in; the device is registered
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SrpLoginResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/signup:
+    post:
+      tags: [login]
+      operationId: signup
+      summary: Create an account and its first device (only with UOTP_SIGNUP=enabled)
+      description: |
+        Needs the emailed code (request it with `/login/email-code`, which sends codes to new addresses only
+        when sign-up is enabled), the full key bundle with `srp`, and the proof-of-possession headers
+        (`X-UOTP-Device: pending`).
+      security:
+        - pendingDeviceSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SignupRequest'}
+      responses:
+        '201':
+          description: Account and device created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EnrollResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/sessions:
+    get:
+      tags: [devices]
+      operationId: listSessions
+      summary: Active sessions (device name, app version, last seen, last IP), like Ente's
+      description: Revoke any of them with `POST /otp/v1/devices/{device_id}/revoke`.
+      responses:
+        '200':
+          description: Sessions, most recently seen first
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SessionList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /otp/v1/enrollment-tokens:
+    post:
+      tags: [enrollment]
+      operationId: createEnrollmentToken
+      summary: An existing device mints a single-use enrollment token for its account
+      responses:
+        '201':
+          description: The token, shown once
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EnrollmentToken'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/account/keys:
+    get:
+      tags: [account]
+      operationId: getAccountKeys
+      summary: The key bundle of the current key epoch, and this device's sealed vault key if any
+      responses:
+        '200':
+          description: Key bundle
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountKeys'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+    put:
+      tags: [account]
+      operationId: putAccountKeys
+      summary: Replace the password and recovery wraps (password change, new recovery key)
+      description: |
+        Same key epoch only (a new vault key goes through `POST /otp/v1/vault/rotate`). Optimistic:
+        `base_revision` must equal the current `keys_revision`, else `409 keys_revision_conflict`.
+        Omitting `password_wrap` and `password_kdf` removes the password path (the "paranoid" setting of
+        design §3.2): only device pairing and the recovery key remain.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PutKeysRequest'}
+      responses:
+        '200':
+          description: Stored
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountKeys'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  /otp/v1/devices:
+    get:
+      tags: [devices]
+      operationId: listDevices
+      summary: Every device of the account, revoked ones included (to verify old head signatures)
+      responses:
+        '200':
+          description: Device list
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeviceList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /otp/v1/devices/{device_id}/revoke:
+    post:
+      tags: [devices]
+      operationId: revokeDevice
+      summary: Revoke a device of the account (itself included) at once
+      description: |
+        Effective immediately: the device's signatures are refused (`401 device_revoked`), its open event
+        streams get a `revoked` event and close, its sealed vault keys are deleted, and the head reports
+        `rotation_required: true` until a device completes `POST /otp/v1/vault/rotate` (design §3.6).
+        Idempotent: revoking a revoked device answers 200 with the same device.
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Revoked
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Device'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /otp/v1/pairings:
+    post:
+      tags: [pairing]
+      operationId: createPairing
+      summary: An existing device opens a pairing session for a new device (step 1)
+      description: |
+        Device-to-device enrollment (design §3.4). Flow:
+        1. Device A (registered) `POST /otp/v1/pairings` and shows a QR code with the server URL,
+           `pairing_id`, `secret` and the fingerprint of its own Ed25519 key.
+        2. Device B scans it, generates its key pairs and calls `.../join` (LAN-only by default).
+        3. A gets a `pairing` SSE event (or polls `GET /otp/v1/pairings/{pairing_id}`), shows the SAS derived
+           from both public keys; the user compares it with B's screen.
+        4. A calls `.../approve` with B's device certificate and the vault key sealed to B's X25519 key, both
+           signed by A. The server verifies both signatures and registers B.
+        5. B polls `.../result` (every 2 s at most), checks that the approver key matches the QR fingerprint,
+           verifies the signatures, opens the sealed vault key and is now a registered device.
+        A session expires after 10 minutes and is single-use.
+      responses:
+        '201':
+          description: Session created; the secret is shown once
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PairingCreated'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/pairings/{pairing_id}:
+    get:
+      tags: [pairing]
+      operationId: getPairing
+      summary: The creating device reads the session state and the joining device's keys
+      parameters:
+        - $ref: '#/components/parameters/PairingId'
+      responses:
+        '200':
+          description: Session state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Pairing'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /otp/v1/pairings/{pairing_id}/join:
+    post:
+      tags: [pairing]
+      operationId: joinPairing
+      summary: The new device joins with the pairing secret (LAN-only by default)
+      description: |
+        `Authorization: Bearer <pairing secret>` and signature headers with `X-UOTP-Device: pending`,
+        verified with `ed25519_public_key` from the body. Only once per session (`409 pairing_state`).
+      parameters:
+        - $ref: '#/components/parameters/PairingId'
+      security:
+        - pairingSecret: []
+          pendingDeviceSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/JoinRequest'}
+      responses:
+        '200':
+          description: Joined; waiting for approval
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/JoinResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/pairings/{pairing_id}/approve:
+    post:
+      tags: [pairing]
+      operationId: approvePairing
+      summary: The creating device approves the joined device after the SAS check
+      parameters:
+        - $ref: '#/components/parameters/PairingId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ApproveRequest'}
+      responses:
+        '200':
+          description: The new device is registered
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Device'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+
+  /otp/v1/pairings/{pairing_id}/reject:
+    post:
+      tags: [pairing]
+      operationId: rejectPairing
+      summary: The creating device rejects the session (SAS mismatch or cancel)
+      parameters:
+        - $ref: '#/components/parameters/PairingId'
+      responses:
+        '200':
+          description: Rejected
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Pairing'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  /otp/v1/pairings/{pairing_id}/result:
+    get:
+      tags: [pairing]
+      operationId: getPairingResult
+      summary: The joining device polls for the outcome (LAN-only by default)
+      description: |
+        `Authorization: Bearer <pairing secret>` and signature headers with `X-UOTP-Device: <device_id from
+        join>`, verified with the key it joined with.
+      parameters:
+        - $ref: '#/components/parameters/PairingId'
+      security:
+        - pairingSecret: []
+          pendingDeviceSignature: []
+      responses:
+        '200':
+          description: Outcome so far
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PairingResult'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/vault:
+    get:
+      tags: [vault]
+      operationId: getVault
+      summary: The signed head and every item changed after `since` (tombstones included)
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: The highest vault version the client holds; 0 (default) returns every item.
+          schema: {type: integer, minimum: 0, default: 0}
+      responses:
+        '200':
+          description: Head and changes
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/VaultChanges'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+
+  /otp/v1/vault/commit:
+    post:
+      tags: [vault]
+      operationId: commitVault
+      summary: Atomically upsert and delete items on top of `base_version`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CommitRequest'}
+      responses:
+        '200':
+          description: Committed; the new head
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/VaultHead'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/VersionConflict'}
+        '413': {$ref: '#/components/responses/TooLarge'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/vault/rotate:
+    post:
+      tags: [vault]
+      operationId: rotateVault
+      summary: Re-encrypt the whole vault under a new vault key (new key epoch)
+      description: |
+        A commit that also moves to `new_key_epoch = key_epoch + 1` (design §3.6). In one transaction:
+        - every item that is live after the commit must be in `upserts` (re-encrypted with the new key);
+        - `device_keys` must hold exactly one sealed vault key for every active device, the caller included;
+        - `keys` replaces the password and recovery wraps for the new epoch;
+        - wraps of older epochs are deleted and `rotation_required` goes back to false.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RotateRequest'}
+      responses:
+        '200':
+          description: Rotated; the new head
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/VaultHead'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/VersionConflict'}
+        '413': {$ref: '#/components/responses/TooLarge'}
+
+  /otp/v1/events:
+    get:
+      tags: [events]
+      operationId: streamEvents
+      summary: Server-Sent Events stream of change notifications for the account
+      description: |
+        `text/event-stream` (docs/sync.md). Signed like any device request; the signature only has to be valid
+        when the stream opens. The stream sends, in this order:
+        - `retry: 5000`, then an `event: hello` with the current state (`EventState`);
+        - `event: vault` (`id:` = the new version) after every commit or rotation of the account;
+        - `event: devices` when a device is added or revoked;
+        - `event: pairing` to the device that created a pairing session, when it is joined;
+        - `event: revoked` to a device that was just revoked, after which the server closes the stream;
+        - a comment line `: keepalive` every 15 s (`UOTP_SSE_KEEPALIVE_S`).
+        Every `data:` is one line of JSON. On reconnect, the `hello` event carries the current state, so a
+        client compares it with what it holds instead of replaying missed events. A device may hold at most
+        3 open streams (`429 rate_limited` beyond). The server closes a stream after 1 hour; the client
+        reconnects (a new signature, so a new nonce and timestamp).
+      responses:
+        '200':
+          description: The stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                retry: 5000
+
+                event: hello
+                data: {"version":12,"key_epoch":1,"devices_revision":3,"rotation_required":false}
+
+                event: vault
+                id: 13
+                data: {"version":13,"key_epoch":1,"signed_by":"dev_AAAAAAAAAAAAAAAAAAAAAA"}
+
+                : keepalive
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /healthz:
+    get:
+      tags: [health]
+      operationId: healthz
+      summary: Liveness (the process answers). Not routed by the reverse proxy.
+      security: []
+      responses:
+        '200':
+          description: Alive
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Health'}
+  /readyz:
+    get:
+      tags: [health]
+      operationId: readyz
+      summary: Readiness (database reachable and migrated). Not routed by the reverse proxy.
+      security: []
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Health'}
+        '503':
+          description: Not ready
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Health'}
+  /metrics:
+    get:
+      tags: [health]
+      operationId: metrics
+      summary: Prometheus text metrics; only for `UOTP_METRICS_NETWORKS` (loopback by default)
+      security: []
+      responses:
+        '200':
+          description: Metrics in the Prometheus text exposition format
+          content:
+            text/plain:
+              schema: {type: string}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+components:
+  securitySchemes:
+    deviceSignature:
+      type: apiKey
+      in: header
+      name: X-UOTP-Signature
+      description: |
+        Ed25519 request signature of a registered device, with `X-UOTP-Device`, `X-UOTP-Timestamp` and
+        `X-UOTP-Nonce` (see "Authentication" above for the canonical request).
+    pendingDeviceSignature:
+      type: apiKey
+      in: header
+      name: X-UOTP-Signature
+      description: |
+        Proof of possession of a new device key: the same four headers and canonical request as
+        `deviceSignature`, with `X-UOTP-Device: pending` (or the pending `device_id` on pairing results).
+    enrollmentToken:
+      type: http
+      scheme: bearer
+      description: 'Single-use enrollment token `uoe_...`, valid 10 minutes.'
+    pairingSecret:
+      type: http
+      scheme: bearer
+      description: 'Pairing session secret `uop_...`, valid 10 minutes.'
+
+  parameters:
+    DeviceId:
+      name: device_id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/DeviceIdValue'}
+    PairingId:
+      name: pairing_id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/PairingIdValue'}
+
+  responses:
+    BadRequest:
+      description: |
+        The request is malformed or refused by a rule: `invalid_request`, `invalid_head_signature`,
+        `invalid_device_signature`, `invalid_seal_signature`, `bad_version`, `empty_commit`, `unknown_item`,
+        `duplicate_item`, `too_many_items`, `keys_required`, `incomplete_rotation`.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Unauthorized:
+      description: '`invalid_signature`, `stale_request`, `replayed_request`, `device_revoked`, `invalid_token`,
+        `srp_failed`, `invalid_email_code`.'
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Forbidden:
+      description: '`enrollment_network_denied` (route restricted to the LAN), `signup_disabled` or `forbidden`.'
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    NotFound:
+      description: '`not_found`.'
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Conflict:
+      description: '`keys_exist`, `keys_revision_conflict`, `device_exists`, `pairing_state`, `email_taken`.'
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    VersionConflict:
+      description: |
+        `version_conflict` (`base_version` is not the current version) or `key_epoch_conflict`. The problem
+        carries the current `head`: pull `GET /otp/v1/vault?since=...`, merge, and retry.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    Gone:
+      description: '`pairing_expired`.'
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    TooLarge:
+      description: '`body_too_large` (over `UOTP_MAX_BODY_BYTES`, 4 MiB by default).'
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    RateLimited:
+      description: '`rate_limited` or `account_locked` (SRP lockout); `Retry-After` header (seconds) and
+        `retry_after` field.'
+      headers:
+        Retry-After:
+          schema: {type: integer}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+
+  schemas:
+    B64:
+      type: string
+      description: base64url without padding
+      pattern: '^[A-Za-z0-9_-]*$'
+    Ed25519PublicKey:
+      type: string
+      description: 32-byte Ed25519 public key, base64url
+      pattern: '^[A-Za-z0-9_-]{43}$'
+    X25519PublicKey:
+      type: string
+      description: 32-byte X25519 public key, base64url
+      pattern: '^[A-Za-z0-9_-]{43}$'
+    Signature:
+      type: string
+      description: 64-byte Ed25519 signature, base64url
+      pattern: '^[A-Za-z0-9_-]{86}$'
+    AccountIdValue:
+      type: string
+      pattern: '^acc_[A-Za-z0-9_-]{22}$'
+    DeviceIdValue:
+      type: string
+      pattern: '^dev_[A-Za-z0-9_-]{22}$'
+    PairingIdValue:
+      type: string
+      pattern: '^pair_[A-Za-z0-9_-]{22}$'
+    ItemId:
+      type: string
+      description: Lowercase canonical UUID chosen by the client
+      pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    ItemBlob:
+      type: string
+      description: The encrypted item (docs/crypto-format.md), base64url, at most 64 KiB decoded
+      pattern: '^[A-Za-z0-9_-]+$'
+      maxLength: 87382
+    WrapBlob:
+      type: string
+      description: An opaque wrapped key or KDF parameter set, base64url, at most 4 KiB decoded
+      pattern: '^[A-Za-z0-9_-]+$'
+      maxLength: 5462
+    Label:
+      type: string
+      description: |
+        A human name for the device ("Pixel 8"). Stored in plain text and shown in the admin CLI so the
+        owner can tell devices apart: it is not secret, keep it generic.
+      minLength: 1
+      maxLength: 64
+
+    ServerInfo:
+      type: object
+      required: [api_version, server_time]
+      properties:
+        api_version: {type: string, example: 1.0.0}
+        server_time: {type: integer, description: Unix seconds}
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, enum: [ok, unavailable]}
+
+    KeyBundle:
+      type: object
+      description: |
+        The account's wrapped vault key, uploaded by the client and opaque to the server. `password_wrap` and
+        `password_kdf` (Argon2id salt and limits) come together or not at all; `recovery_wrap` is required.
+      required: [recovery_wrap]
+      additionalProperties: false
+      properties:
+        password_wrap: {$ref: '#/components/schemas/WrapBlob'}
+        password_kdf: {$ref: '#/components/schemas/WrapBlob'}
+        recovery_wrap: {$ref: '#/components/schemas/WrapBlob'}
+        srp:
+          description: |
+            The SRP login record. Send it at bootstrap and with every password change; omitting it keeps the
+            stored one; a bundle without `password_wrap` deletes it.
+          $ref: '#/components/schemas/SrpSetup'
+
+    EnrollRequest:
+      type: object
+      required: [ed25519_public_key, x25519_public_key, label]
+      additionalProperties: false
+      properties:
+        ed25519_public_key: {$ref: '#/components/schemas/Ed25519PublicKey'}
+        x25519_public_key: {$ref: '#/components/schemas/X25519PublicKey'}
+        label: {$ref: '#/components/schemas/Label'}
+        keys: {$ref: '#/components/schemas/KeyBundle'}
+        app_version: {$ref: '#/components/schemas/AppVersion'}
+        email_code:
+          description: |
+            Bootstrap only, when the account's email is not verified yet: the code emailed by
+            `ultimateotp account-create` (or a new one from `/login/email-code`). Verifies the address once.
+          $ref: '#/components/schemas/EmailCode'
+
+    AppVersion:
+      type: string
+      pattern: '^[\x21-\x7e]{1,64}$'
+
+    Email:
+      type: string
+      maxLength: 254
+      description: Compared in lower case
+      example: owner@example.org
+
+    EmailCode:
+      type: string
+      pattern: '^[0-9]{6}$'
+
+    EmailRequest:
+      type: object
+      required: [email]
+      additionalProperties: false
+      properties:
+        email: {$ref: '#/components/schemas/Email'}
+
+    Accepted:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, enum: [accepted]}
+
+    SrpPublicValue:
+      type: string
+      description: PAD(value) for the 4096-bit group, 512 bytes, base64url
+      pattern: '^[A-Za-z0-9_-]{683}$'
+
+    SrpProof:
+      type: string
+      description: 32 bytes, base64url
+      pattern: '^[A-Za-z0-9_-]{43}$'
+
+    SrpSetup:
+      type: object
+      description: The SRP-6a login record, made by the client (decision 6). Stored as is.
+      required: [srp_user_id, srp_salt, srp_verifier]
+      additionalProperties: false
+      properties:
+        srp_user_id: {$ref: '#/components/schemas/ItemId'}
+        srp_salt:
+          type: string
+          description: 16 to 64 random bytes, base64url
+          pattern: '^[A-Za-z0-9_-]{22,86}$'
+        srp_verifier: {$ref: '#/components/schemas/SrpPublicValue'}
+
+    SrpAttributes:
+      type: object
+      required: [srp_user_id, srp_salt, password_kdf, email_code_required]
+      properties:
+        srp_user_id: {$ref: '#/components/schemas/ItemId'}
+        srp_salt: {$ref: '#/components/schemas/B64'}
+        password_kdf: {$ref: '#/components/schemas/WrapBlob'}
+        email_code_required: {type: boolean}
+
+    SrpSessionRequest:
+      type: object
+      required: [email, srp_a]
+      additionalProperties: false
+      properties:
+        email: {$ref: '#/components/schemas/Email'}
+        srp_a: {$ref: '#/components/schemas/SrpPublicValue'}
+        email_code: {$ref: '#/components/schemas/EmailCode'}
+
+    SrpSession:
+      type: object
+      required: [session_id, srp_b]
+      properties:
+        session_id: {type: string, pattern: '^srp_[A-Za-z0-9_-]{22}$'}
+        srp_b: {$ref: '#/components/schemas/SrpPublicValue'}
+
+    NewDevice:
+      type: object
+      required: [ed25519_public_key, x25519_public_key, label]
+      additionalProperties: false
+      properties:
+        ed25519_public_key: {$ref: '#/components/schemas/Ed25519PublicKey'}
+        x25519_public_key: {$ref: '#/components/schemas/X25519PublicKey'}
+        label: {$ref: '#/components/schemas/Label'}
+        app_version: {$ref: '#/components/schemas/AppVersion'}
+
+    SrpVerifyRequest:
+      type: object
+      required: [session_id, srp_m1, device]
+      additionalProperties: false
+      properties:
+        session_id: {type: string, pattern: '^srp_[A-Za-z0-9_-]{22}$'}
+        srp_m1: {$ref: '#/components/schemas/SrpProof'}
+        device: {$ref: '#/components/schemas/NewDevice'}
+
+    KeyAttributes:
+      type: object
+      required: [key_epoch, keys_revision, recovery_wrap]
+      properties:
+        key_epoch: {type: integer, minimum: 1}
+        keys_revision: {type: integer, minimum: 1}
+        password_wrap: {oneOf: [{$ref: '#/components/schemas/WrapBlob'}, {type: 'null'}]}
+        password_kdf: {oneOf: [{$ref: '#/components/schemas/WrapBlob'}, {type: 'null'}]}
+        recovery_wrap: {$ref: '#/components/schemas/WrapBlob'}
+
+    SrpLoginResponse:
+      type: object
+      required: [srp_m2, account_id, device, head, keys]
+      properties:
+        srp_m2: {$ref: '#/components/schemas/SrpProof'}
+        account_id: {$ref: '#/components/schemas/AccountIdValue'}
+        device: {$ref: '#/components/schemas/Device'}
+        head: {$ref: '#/components/schemas/VaultHead'}
+        keys: {$ref: '#/components/schemas/KeyAttributes'}
+
+    SignupRequest:
+      type: object
+      required: [email, device, keys]
+      additionalProperties: false
+      properties:
+        email: {$ref: '#/components/schemas/Email'}
+        email_code: {$ref: '#/components/schemas/EmailCode'}
+        device: {$ref: '#/components/schemas/NewDevice'}
+        keys: {$ref: '#/components/schemas/KeyBundle'}
+
+    Session:
+      type: object
+      required: [device_id, label, app_version, enrolled_via, created_at, last_seen_at, last_ip, revoked_at,
+                 current]
+      properties:
+        device_id: {$ref: '#/components/schemas/DeviceIdValue'}
+        label: {$ref: '#/components/schemas/Label'}
+        app_version: {oneOf: [{$ref: '#/components/schemas/AppVersion'}, {type: 'null'}]}
+        enrolled_via: {type: string}
+        created_at: {type: integer}
+        last_seen_at: {oneOf: [{type: integer}, {type: 'null'}]}
+        last_ip: {oneOf: [{type: string}, {type: 'null'}]}
+        revoked_at: {oneOf: [{type: integer}, {type: 'null'}]}
+        current: {type: boolean, description: This is the calling device}
+
+    SessionList:
+      type: object
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          items: {$ref: '#/components/schemas/Session'}
+
+    EnrollResponse:
+      type: object
+      required: [account_id, device, head]
+      properties:
+        account_id: {$ref: '#/components/schemas/AccountIdValue'}
+        device: {$ref: '#/components/schemas/Device'}
+        head: {$ref: '#/components/schemas/VaultHead'}
+
+    EnrollmentToken:
+      type: object
+      required: [token, expires_at]
+      properties:
+        token: {type: string, pattern: '^uoe_[A-Za-z0-9_-]{43}$'}
+        expires_at: {type: integer}
+
+    RecoveryKeys:
+      type: object
+      required: [account_id, key_epoch, keys_revision, recovery_wrap]
+      properties:
+        account_id: {$ref: '#/components/schemas/AccountIdValue'}
+        key_epoch: {type: integer, minimum: 1}
+        keys_revision: {type: integer, minimum: 1}
+        password_wrap: {oneOf: [{$ref: '#/components/schemas/WrapBlob'}, {type: 'null'}]}
+        password_kdf: {oneOf: [{$ref: '#/components/schemas/WrapBlob'}, {type: 'null'}]}
+        recovery_wrap: {$ref: '#/components/schemas/WrapBlob'}
+
+    SealedVaultKey:
+      type: object
+      description: |
+        The vault key sealed to a device's X25519 key (`crypto_box_seal`), signed by the device that sealed it:
+        `seal_signature = Ed25519(sealer, "UOTP-SEAL-v1\n<account_id>\n<key_epoch>\n<recipient device_id>\n"
+        + base64url(SHA-256(sealed bytes)))`. The recipient verifies it against a device it trusts before
+        opening the box (anyone can seal to a public key; only the signature says who did).
+      required: [key_epoch, sealed_vault_key, sealed_by, seal_signature]
+      properties:
+        key_epoch: {type: integer, minimum: 1}
+        sealed_vault_key: {$ref: '#/components/schemas/WrapBlob'}
+        sealed_by: {$ref: '#/components/schemas/DeviceIdValue'}
+        seal_signature: {$ref: '#/components/schemas/Signature'}
+
+    AccountKeys:
+      type: object
+      required: [account_id, key_epoch, keys_revision, recovery_wrap, device_key]
+      properties:
+        account_id: {$ref: '#/components/schemas/AccountIdValue'}
+        key_epoch: {type: integer, minimum: 1}
+        keys_revision: {type: integer, minimum: 1}
+        password_wrap: {oneOf: [{$ref: '#/components/schemas/WrapBlob'}, {type: 'null'}]}
+        password_kdf: {oneOf: [{$ref: '#/components/schemas/WrapBlob'}, {type: 'null'}]}
+        recovery_wrap: {$ref: '#/components/schemas/WrapBlob'}
+        device_key:
+          description: This device's sealed vault key for the current epoch, if one was uploaded
+          oneOf: [{$ref: '#/components/schemas/SealedVaultKey'}, {type: 'null'}]
+
+    PutKeysRequest:
+      type: object
+      required: [base_revision, key_epoch, recovery_wrap]
+      additionalProperties: false
+      properties:
+        base_revision: {type: integer, minimum: 1}
+        key_epoch: {type: integer, minimum: 1, description: Must equal the current key epoch}
+        password_wrap: {$ref: '#/components/schemas/WrapBlob'}
+        password_kdf: {$ref: '#/components/schemas/WrapBlob'}
+        recovery_wrap: {$ref: '#/components/schemas/WrapBlob'}
+        srp: {$ref: '#/components/schemas/SrpSetup'}
+
+    Device:
+      type: object
+      required: [device_id, label, ed25519_public_key, x25519_public_key, enrolled_via, added_by,
+                 added_by_signature, created_at, last_seen_at, revoked_at]
+      properties:
+        device_id: {$ref: '#/components/schemas/DeviceIdValue'}
+        label: {$ref: '#/components/schemas/Label'}
+        ed25519_public_key: {$ref: '#/components/schemas/Ed25519PublicKey'}
+        x25519_public_key: {$ref: '#/components/schemas/X25519PublicKey'}
+        enrolled_via:
+          type: string
+          enum: [bootstrap, token, pairing, password, signup]
+          description: '`bootstrap`, `token`, `password` and `signup` devices enrolled themselves (password or
+            recovery key); clients should flag them, since no other device vouched for them.'
+        added_by:
+          oneOf: [{$ref: '#/components/schemas/DeviceIdValue'}, {type: 'null'}]
+        added_by_signature:
+          description: |
+            Device certificate from the approving device (pairing only):
+            `Ed25519(approver, "UOTP-DEVICE-v1\n<account_id>\n<device_id>\n<ed25519_public_key>\n<x25519_public_key>")`
+            with both keys in their base64url form.
+          oneOf: [{$ref: '#/components/schemas/Signature'}, {type: 'null'}]
+        created_at: {type: integer}
+        last_seen_at: {oneOf: [{type: integer}, {type: 'null'}]}
+        revoked_at: {oneOf: [{type: integer}, {type: 'null'}]}
+        app_version: {oneOf: [{$ref: '#/components/schemas/AppVersion'}, {type: 'null'}]}
+
+    DeviceList:
+      type: object
+      required: [devices_revision, devices]
+      properties:
+        devices_revision: {type: integer, minimum: 0}
+        devices:
+          type: array
+          items: {$ref: '#/components/schemas/Device'}
+
+    PairingCreated:
+      type: object
+      required: [pairing_id, secret, expires_at]
+      properties:
+        pairing_id: {$ref: '#/components/schemas/PairingIdValue'}
+        secret: {type: string, pattern: '^uop_[A-Za-z0-9_-]{43}$'}
+        expires_at: {type: integer}
+
+    PairingDevice:
+      type: object
+      required: [device_id, label, ed25519_public_key, x25519_public_key]
+      properties:
+        device_id: {$ref: '#/components/schemas/DeviceIdValue'}
+        label: {$ref: '#/components/schemas/Label'}
+        ed25519_public_key: {$ref: '#/components/schemas/Ed25519PublicKey'}
+        x25519_public_key: {$ref: '#/components/schemas/X25519PublicKey'}
+
+    Pairing:
+      type: object
+      required: [pairing_id, status, expires_at, device]
+      properties:
+        pairing_id: {$ref: '#/components/schemas/PairingIdValue'}
+        status: {$ref: '#/components/schemas/PairingStatus'}
+        expires_at: {type: integer}
+        device:
+          description: The joining device, once joined
+          oneOf: [{$ref: '#/components/schemas/PairingDevice'}, {type: 'null'}]
+
+    PairingStatus:
+      type: string
+      enum: [open, joined, approved, rejected, expired]
+
+    JoinRequest:
+      type: object
+      required: [ed25519_public_key, x25519_public_key, label]
+      additionalProperties: false
+      properties:
+        ed25519_public_key: {$ref: '#/components/schemas/Ed25519PublicKey'}
+        x25519_public_key: {$ref: '#/components/schemas/X25519PublicKey'}
+        label: {$ref: '#/components/schemas/Label'}
+
+    JoinResponse:
+      type: object
+      required: [pairing_id, device_id, status]
+      properties:
+        pairing_id: {$ref: '#/components/schemas/PairingIdValue'}
+        device_id: {$ref: '#/components/schemas/DeviceIdValue'}
+        status: {$ref: '#/components/schemas/PairingStatus'}
+
+    ApproveRequest:
+      type: object
+      required: [device_id, device_signature, sealed_vault_key, seal_signature]
+      additionalProperties: false
+      properties:
+        device_id:
+          $ref: '#/components/schemas/DeviceIdValue'
+        device_signature:
+          $ref: '#/components/schemas/Signature'
+        sealed_vault_key:
+          $ref: '#/components/schemas/WrapBlob'
+        seal_signature:
+          $ref: '#/components/schemas/Signature'
+
+    PairingResult:
+      type: object
+      required: [pairing_id, status, device_id, account_id, approver, device_signature, device_key]
+      properties:
+        pairing_id: {$ref: '#/components/schemas/PairingIdValue'}
+        status: {$ref: '#/components/schemas/PairingStatus'}
+        device_id: {$ref: '#/components/schemas/DeviceIdValue'}
+        account_id: {$ref: '#/components/schemas/AccountIdValue'}
+        approver:
+          description: The creating device (compare its key with the QR fingerprint)
+          type: object
+          required: [device_id, ed25519_public_key]
+          properties:
+            device_id: {$ref: '#/components/schemas/DeviceIdValue'}
+            ed25519_public_key: {$ref: '#/components/schemas/Ed25519PublicKey'}
+        device_signature:
+          description: Set once approved
+          oneOf: [{$ref: '#/components/schemas/Signature'}, {type: 'null'}]
+        device_key:
+          description: Set once approved
+          oneOf: [{$ref: '#/components/schemas/SealedVaultKey'}, {type: 'null'}]
+
+    VaultHead:
+      type: object
+      required: [account_id, version, key_epoch, signed_by, signature, updated_at, rotation_required,
+                 devices_revision]
+      properties:
+        account_id: {$ref: '#/components/schemas/AccountIdValue'}
+        version: {type: integer, minimum: 0}
+        key_epoch: {type: integer, minimum: 1}
+        signed_by:
+          description: null only for the empty vault at version 0
+          oneOf: [{$ref: '#/components/schemas/DeviceIdValue'}, {type: 'null'}]
+        signature:
+          oneOf: [{$ref: '#/components/schemas/Signature'}, {type: 'null'}]
+        updated_at: {oneOf: [{type: integer}, {type: 'null'}]}
+        rotation_required:
+          type: boolean
+          description: A device was revoked since the last key rotation
+        devices_revision: {type: integer, minimum: 0}
+
+    HeadInput:
+      type: object
+      required: [version, signature]
+      additionalProperties: false
+      properties:
+        version: {type: integer, minimum: 1, description: Must be base_version + 1}
+        signature: {$ref: '#/components/schemas/Signature'}
+
+    Upsert:
+      type: object
+      required: [item_id, blob]
+      additionalProperties: false
+      properties:
+        item_id: {$ref: '#/components/schemas/ItemId'}
+        blob: {$ref: '#/components/schemas/ItemBlob'}
+
+    CommitRequest:
+      type: object
+      required: [base_version, key_epoch, head]
+      additionalProperties: false
+      properties:
+        base_version: {type: integer, minimum: 0}
+        key_epoch: {type: integer, minimum: 1}
+        head: {$ref: '#/components/schemas/HeadInput'}
+        upserts:
+          type: array
+          maxItems: 2000
+          items: {$ref: '#/components/schemas/Upsert'}
+          default: []
+        deletes:
+          type: array
+          maxItems: 2000
+          items: {$ref: '#/components/schemas/ItemId'}
+          default: []
+
+    DeviceKeyInput:
+      type: object
+      required: [device_id, sealed_vault_key, seal_signature]
+      additionalProperties: false
+      properties:
+        device_id: {$ref: '#/components/schemas/DeviceIdValue'}
+        sealed_vault_key: {$ref: '#/components/schemas/WrapBlob'}
+        seal_signature: {$ref: '#/components/schemas/Signature'}
+
+    RotateRequest:
+      type: object
+      required: [base_version, new_key_epoch, head, keys, device_keys]
+      additionalProperties: false
+      properties:
+        base_version: {type: integer, minimum: 0}
+        new_key_epoch: {type: integer, minimum: 2}
+        head: {$ref: '#/components/schemas/HeadInput'}
+        upserts:
+          type: array
+          maxItems: 2000
+          items: {$ref: '#/components/schemas/Upsert'}
+          default: []
+        deletes:
+          type: array
+          maxItems: 2000
+          items: {$ref: '#/components/schemas/ItemId'}
+          default: []
+        keys: {$ref: '#/components/schemas/KeyBundle'}
+        device_keys:
+          type: array
+          minItems: 1
+          items: {$ref: '#/components/schemas/DeviceKeyInput'}
+
+    Item:
+      type: object
+      required: [item_id, version, deleted, blob]
+      properties:
+        item_id: {$ref: '#/components/schemas/ItemId'}
+        version: {type: integer, minimum: 1, description: Vault version of the commit that last changed it}
+        deleted: {type: boolean}
+        blob:
+          description: null for a tombstone
+          oneOf: [{$ref: '#/components/schemas/ItemBlob'}, {type: 'null'}]
+
+    VaultChanges:
+      type: object
+      required: [head, items]
+      properties:
+        head: {$ref: '#/components/schemas/VaultHead'}
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Item'}
+
+    EventState:
+      type: object
+      description: Payload of the `hello` event
+      required: [version, key_epoch, devices_revision, rotation_required]
+      properties:
+        version: {type: integer}
+        key_epoch: {type: integer}
+        devices_revision: {type: integer}
+        rotation_required: {type: boolean}
+
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: {type: string, example: 'https://ultimateotp.invalid/problems/version_conflict'}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        code:
+          type: string
+          enum: [invalid_request, invalid_head_signature, invalid_device_signature, invalid_seal_signature,
+                 bad_version, empty_commit, unknown_item, duplicate_item, too_many_items, keys_required,
+                 incomplete_rotation, invalid_signature, stale_request, replayed_request, device_revoked,
+                 invalid_token, enrollment_network_denied, forbidden, not_found, keys_exist,
+                 keys_revision_conflict, device_exists, pairing_state, version_conflict, key_epoch_conflict,
+                 pairing_expired, body_too_large, rate_limited, internal_error, srp_failed,
+                 invalid_email_code, account_locked, signup_disabled, email_taken]
+        server_time: {type: integer, description: 'On `stale_request`: the server clock (Unix seconds)'}
+        head:
+          description: On `version_conflict` and `key_epoch_conflict`
+          $ref: '#/components/schemas/VaultHead'
+        retry_after: {type: integer, description: 'On `rate_limited`: seconds'}

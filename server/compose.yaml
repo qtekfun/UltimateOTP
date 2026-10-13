@@ -1,0 +1,104 @@
+# SPDX-FileCopyrightText: 2026 UltimateOTP contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Example deployment (Docker Compose, one host). Next to it, a `.env` file:
+#   UOTP_VERSION=0.1.0              image tag
+#   UOTP_BIND=127.0.0.1:8047        keep it local; public access only through the reverse proxy
+#   UOTP_TRUSTED_PROXIES=...        the proxy addresses whose X-Forwarded-For is believed
+#   UOTP_LAN_NETWORKS=...           your LAN /24 (and tailnet): where pairing and tokens work
+#   UOTP_SMTP_FROM=UltimateOTP <otp@your.domain>   a sender your Resend domain allows
+# and the Resend API key in ./secrets/resend_api_key (one line, file mode 0644, owner only
+# readable directory). Optional ntfy: UOTP_NTFY_URL=https://ntfy.your.domain/topic, plus the
+# token in ./secrets/ntfy_token with the commented lines below.
+# then:
+#   docker compose up -d
+#   docker compose exec api ultimateotp account-create --email you@your.domain
+# Without SMTP the api refuses to start unless UOTP_EMAIL_VERIFICATION=disabled (development).
+# Behind Traefik (Cloudflare Tunnel), see docs/deploy.md for the override with the dedicated
+# proxy network, per-route rate limits and the LAN-only enrollment routes.
+# Migrations run first (`migrate`), then the api. Exactly ONE api process: the live-sync
+# broker is in memory (docs/sync.md); never scale this service.
+
+x-hardening: &hardening
+  image: ${UOTP_IMAGE:-ultimateotp-server}:${UOTP_VERSION:?set UOTP_VERSION}
+  build:
+    context: ..
+    dockerfile: server/Dockerfile
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+  pids_limit: 128
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: "3"}
+
+services:
+  migrate:
+    <<: *hardening
+    command: ["migrate"]
+    restart: "no"
+    volumes: [data:/data]
+
+  api:
+    <<: *hardening
+    command: ["api"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      UOTP_LOG_LEVEL: ${UOTP_LOG_LEVEL:-INFO}
+      # Empty: no proxy is trusted; a request carrying forwarding headers never counts as LAN.
+      UOTP_TRUSTED_PROXIES: ${UOTP_TRUSTED_PROXIES:-}
+      # Password login (email code + SRP) from anywhere, like Ente (decision 6) ...
+      UOTP_ENROLLMENT_SCOPE: ${UOTP_ENROLLMENT_SCOPE:-anywhere}
+      # ... while enrollment tokens and pairing stay on the LAN. Narrow the LAN to your own
+      # ranges; never a Docker range.
+      UOTP_PAIRING_SCOPE: ${UOTP_PAIRING_SCOPE:-lan}
+      # Accounts come from the CLI (decision 8).
+      UOTP_SIGNUP: ${UOTP_SIGNUP:-disabled}
+      # Emailed login codes and notices through Resend (decision 13). The API key is the
+      # Docker secret below, never an environment variable.
+      UOTP_EMAIL_VERIFICATION: ${UOTP_EMAIL_VERIFICATION:-enabled}
+      UOTP_SMTP_HOST: ${UOTP_SMTP_HOST:-smtp.resend.com}
+      UOTP_SMTP_PORT: ${UOTP_SMTP_PORT:-587}
+      UOTP_SMTP_USER: ${UOTP_SMTP_USER:-resend}
+      UOTP_SMTP_FROM: ${UOTP_SMTP_FROM:-}
+      # ntfy notifications (decision 7); empty: logged only.
+      UOTP_NTFY_URL: ${UOTP_NTFY_URL:-}
+      UOTP_LAN_NETWORKS: ${UOTP_LAN_NETWORKS:-127.0.0.0/8,::1/128,192.168.0.0/16,fd00::/8}
+      UOTP_DENIED_NETWORKS: ${UOTP_DENIED_NETWORKS:-}
+      # Who may scrape /metrics (never routed by the proxy).
+      UOTP_METRICS_NETWORKS: ${UOTP_METRICS_NETWORKS:-127.0.0.0/8,::1/128}
+      # Open connections, live-sync streams included (3 per device at most).
+      UOTP_LIMIT_CONCURRENCY: ${UOTP_LIMIT_CONCURRENCY:-256}
+    # Small: tens of MiB idle; request bodies are capped at 4 MiB (UOTP_MAX_BODY_BYTES).
+    mem_limit: 256m
+    cpus: 1.0
+    ulimits:
+      nofile: {soft: 4096, hard: 4096}
+    ports: ["${UOTP_BIND:-127.0.0.1:8047}:8047"]
+    volumes: [data:/data]
+    secrets:
+      # pydantic-settings reads /run/secrets/<env name>, prefix included.
+      - source: resend_api_key
+        target: uotp_smtp_password
+      # Optional ntfy access token: uncomment with the secret at the bottom.
+      # - source: ntfy_token
+      #   target: uotp_ntfy_token
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8047/readyz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+secrets:
+  resend_api_key:
+    file: ./secrets/resend_api_key
+  # ntfy_token:
+  #   file: ./secrets/ntfy_token
+
+volumes:
+  data:
