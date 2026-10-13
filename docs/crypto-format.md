@@ -6,7 +6,7 @@
 | Version | Date | Change |
 |---|---|---|
 | 1 | 2026-10-13 | First version (commit c90fd7b, used by the server's interop tests) |
-| 1.1 | 2026-10-13 | Additive, no v1 byte changes: SRP-6a login subkey and protocol (§4.4) for decisions 6 and 13; recovery key wording per decision 10; offline/pending items use `item_version = 0` (vector `item.local_ad_hex`) |
+| 1.1 | 2026-10-13 | Additive, no v1 byte changes: SRP-6a login subkey and the contract 1.1.0 SRP protocol (§4.4) for decisions 6 and 13; recovery key wording per decision 10; offline/pending items use `item_version = 0` (vector `item.local_ad_hex`) |
 
 Status: **normative for v1** (2026-10-13). Owner: the Android client (`feat/android`). The backend
 never decrypts anything. The **signed statements** (request, head, seal and device signatures)
@@ -221,36 +221,38 @@ said. The paranoid option of `design.md` §3.2 (no password path on the server) 
 ### 4.4 Password login from anywhere: SRP-6a (decisions 6 and 13)
 
 Like Ente Auth, a new or reinstalled device signs in with **email → emailed 6-digit code → SRP proof
-of the password**, then unwraps the vault key and registers its device keys. The email code is a
-server-side gate (contract); this section defines the bytes the client derives and proves.
+of the password**, then unwraps the vault key and registers its device keys (contract 1.1.0,
+"Password login from anywhere": `/srp/attributes`, `/login/email-code`, `/srp/session`, `/srp/verify`).
+The protocol bytes below are the contract's; this document owns the **login subkey**, which only
+clients compute.
 
 ```
 login_subkey = KDF(KEK_pw, 1, "loginctx")[0..16]           (Ente's construction: 16 bytes)
-I            = srp_user_id: a random UUIDv4 string the client creates with the verifier (UTF-8)
+I            = srp_user_id: a random UUIDv4 string the client creates with the verifier (ASCII)
 s            = srp_salt: 16 random bytes, independent of the Argon2id salt
-N, g         = RFC 5054 4096-bit group, g = 5;   H = SHA-256;   PAD(x) = x big-endian on 512 bytes
-x  = H(s || H(I || ":" || login_subkey))          v = g^x mod N            (verifier, PAD, b64u)
+N, g         = RFC 5054 4096-bit group (RFC 3526 prime), g = 5;  H = SHA-256;  PAD(x) = big-endian, 512 bytes
 k  = H(PAD(N) || PAD(g))
-A  = g^a mod N,  a = 64 random bytes              B = k·v + g^b mod N      (server)
-u  = H(PAD(A) || PAD(B))                          client aborts if B mod N = 0 or u = 0
-S  = (B − k·v)^(a + u·x) mod N
-M1 = H(PAD(A) || PAD(B) || PAD(S))                (client proof, 32 bytes)
-M2 = H(PAD(A) || M1 || PAD(S))                    (server proof; the client checks it)
+x  = H(s || H(I || ":" || login_subkey))          v = g^x mod N            (verifier, PAD, b64u)
+A  = g^a mod N,  a = 64 random bytes              B = (k·v + g^b) mod N    (server)
+u  = H(PAD(A) || PAD(B))                          client aborts unless 0 < B < N, and if u = 0
+S  = (B − k·v)^(a + u·x) mod N                    K = H(PAD(S))
+M1 = H((H(PAD(N)) xor H(PAD(g))) || H(I) || s || PAD(A) || PAD(B) || K)    (RFC 2945 client proof)
+M2 = H(PAD(A) || M1 || K)                                                  (server proof; checked)
 ```
 
-- `KEK_pw` is the same Argon2id output as §4.1, so the verifier stored on the server reveals nothing
-  about the KEK: the subkey is a one-way BLAKE2b derivation with its own context. An attacker
-  holding the verifier still has to run Argon2id per guess (offline cost unchanged).
-- The proofs follow Ente's server (`H(A, B, S)` with 512-byte padding; see
-  https://github.com/ente-io/ente/issues/7529 and #11723), not RFC 2945's longer M1. `A`, `B` and the
-  verifier always travel as 512-byte values (Ente bug #11723: an unpadded `A` is rejected).
-- The client creates `srp_user_id`, `srp_salt` and `v` at account bootstrap and on every password
-  change, next to the kind 1 and kind 3 wraps; the server stores only those three values.
-- After the server checks `M1` it returns `M2`, the wraps (`password_wrap`, `password_kdf`,
-  `recovery_wrap`, key epoch) and registers the device keys sent in the same flow (contract). The
-  client accepts the wraps only if `M2` verifies.
+- `KEK_pw` is the same Argon2id output as §4.1 (from the `password_kdf` that `/srp/attributes`
+  returns), so a server that only holds the verifier still needs one Argon2id run per password
+  guess. The login subkey is a one-way BLAKE2b derivation with its own context, so the verifier
+  reveals nothing about the KEK, which never leaves the device.
+- The contract text mentions a *proposal* `KDF(KEK_pw, 1, "uotplogn")` (32 bytes). It only affects
+  clients (the server stores `v` and never sees `P`); this document fixes it to Ente's
+  `"loginctx"`, 16 bytes, and the vector `srp` pins it.
+- The client creates `srp_user_id`, `srp_salt` and `v` (`KeyBundle.srp`) at bootstrap or sign-up and
+  on every password change, next to the kind 1 and kind 3 wraps.
+- The client accepts the returned wraps only if `M2` verifies.
 - Implementation: `java.math.BigInteger` (`modPow`), since libsodium has no SRP. Pinned by RFC 5054
-  Appendix B (the same arithmetic with the 1024-bit group and SHA-1) and by the `srp` vector.
+  Appendix B (the same arithmetic with the 1024-bit group and SHA-1), by the `srp` vector, and
+  cross-checked against the server's `server/src/ultimateotp/srp.py`.
 
 ## 5. Devices
 
@@ -507,7 +509,7 @@ uv run --no-project --with pynacl==1.6.2 python generate_vectors.py > vectors.js
 | `sealed_vault_key` | decrypt-only | sealed box (random ephemeral key) and seal signature |
 | `export` | decrypt-only | `.uotp` file with 64-byte chunks (several chunks) |
 | `ente_encrypted_export` | decrypt-only | Ente's JSON format |
-| `srp` | deterministic | RFC 5054 Appendix B, login subkey, verifier, `A`, `B`, `u`, `S`, `M1`, `M2` |
+| `srp` | deterministic | RFC 5054 Appendix B, login subkey, verifier, `A`, `B`, `u`, `S`, `K`, `M1`, `M2` |
 
 The vectors use cheap Argon2id parameters (`opslimit = 2`, `memlimit = 16 MiB`) so tests stay
 fast; they are inside the reader limits. Ed25519 keys come from fixed 32-byte seeds
