@@ -130,8 +130,9 @@ with 1.5x headroom.
   space on a phone; the experimental `x86 / API 30` CI entry runs the same Argon2id test on a
   32-bit emulator image, which is the closest proxy available without an ARM device.
   Status (2026-10-14): that job runs on the `google_apis` x86 API 30 image, because the `default` one
-  does not exist on the GitHub runners, and it passes. It is the only evidence of the key derivation
-  with a 4-byte `size_t`; real armeabi-v7a hardware is still untested.
+  does not exist on the GitHub runners. It is **flaky and advisory**: it has both passed and failed
+  (KB-6). It is the only evidence of the key derivation with a 4-byte `size_t`; real armeabi-v7a
+  hardware is still untested.
 
 ## Known bugs the suite found
 
@@ -147,6 +148,7 @@ production code was not changed; KB-3 has since been fixed (below) and its tests
 | ~~KB-3~~ **closed** | `RootViewModel.create`, `SignupViewModel.go`, `LoginViewModel.go` | `AuthenticationRequiredException` (a Keystore key with `setUserAuthenticationRequired(true)` and a 30 s window, which is every phone with a screen lock) is not an `IOException`, `CryptoException` or `ApiException`, so no handler matches and the coroutine ends the process. It happens when the vault key is first written (tap "Create account") and again at the end of sign-up, after a person has read an email and typed a password for more than 30 s. At that point the server has already created the account (`201`) and the device has not stored its keys: a retry meets `email_taken` | `ExpiredAuthenticationTest` |
 | KB-4 | manifest | The app tells the user to enroll on a LAN address (`EnrollmentPolicy` accepts `http://192.168...`), but the manifest has no network security config, and since Android 9 cleartext HTTP is refused for targetSdk 28+: every plain-http LAN URL fails as a network error | `CleartextPolicyTest` |
 | KB-5 | sign-up / login / sync screens | Form fields are `remember`, not `rememberSaveable`: unfolding or rotating the phone empties the server address, email and code. The step and the recovery words are kept (they live in the view model) | `SignupUiTest` |
+| KB-6 | `PasswordKdf` on 32-bit processes | A 32-bit process (armeabi-v7a, the x86 API 30 emulator) cannot always allocate the 1 GiB Argon2id needs: `KdfMaxStepTest` failed with `crypto_pwhash failed (out of memory?)` and `Argon2id needs at least 1024 MiB`. Creating a new account requires the 1024 MiB step, so it can fail there; it affects only 32-bit devices. The 32-bit emulator job is advisory for this reason. Decision pending: a smaller first rung for 32-bit (the reader already follows the stored parameters), or document 64-bit as a requirement. |
 
 ### KB-3, closed: how
 
