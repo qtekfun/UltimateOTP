@@ -1,0 +1,1 @@
+Self-hosted 2FA authenticator with end-to-end encrypted sync
