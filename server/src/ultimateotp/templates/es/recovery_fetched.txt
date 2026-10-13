@@ -1,0 +1,5 @@
+Subject: UltimateOTP: se han descargado tus datos de recuperación
+
+Un dispositivo nuevo ha descargado las claves envueltas de tu contraseña y de tu clave de recuperación con un token de alta (la vía de la contraseña o de la clave de recuperación).
+
+Si no has sido tú, revoca los dispositivos que no reconozcas y cambia tu contraseña.

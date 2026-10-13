@@ -271,13 +271,15 @@ class Device:
         code: str | None = None,
         *,
         tamper: bool = False,
+        retry_stale: bool = False,
         stale_first: bool = False,
     ) -> httpx.Response:
         """The whole password login of the contract: attributes, session, verify.
 
-        `stale_first` sends the verify request with a clock an hour ahead and, on
-        `stale_request`, repeats the same request with the right time, as the Android client does
-        (`UotpApi.call`, one retry on skew).
+        `stale_first` sends the verify request with a clock an hour ahead and expects
+        `stale_request`; the request is then repeated with the right time, as the Android client
+        does (`UotpApi.call`, one retry on skew). `retry_stale` instead corrects the clock from the
+        `server_time` of a `stale_request` answer and resends the same body.
         """
         group = srp.GROUP_4096
         attributes = self.http.post("/otp/v1/srp/attributes", json={"email": email}).json()
@@ -299,7 +301,7 @@ class Device:
         )
         if tamper:
             m1 = bytes(32)
-        verify = {
+        payload = {
             "session_id": session.json()["session_id"],
             "srp_m1": b64.encode(m1),
             "device": {
@@ -310,9 +312,17 @@ class Device:
             },
         }
         if stale_first:
-            first = self.post("/otp/v1/srp/verify", verify, timestamp=int(time.time()) + 3600)
+            first = self.post("/otp/v1/srp/verify", payload, timestamp=int(time.time()) + 3600)
             assert first.json()["code"] == "stale_request"
-        response = self.post("/otp/v1/srp/verify", verify)
+        response = self.post("/otp/v1/srp/verify", payload)
+        if (
+            retry_stale
+            and response.status_code == 401
+            and response.json().get("code") == "stale_request"
+        ):
+            # What the app does: correct the clock from `server_time` and resend the same body.
+            self.clock_offset = int(response.json()["server_time"]) - int(time.time())
+            response = self.post("/otp/v1/srp/verify", payload)
         if response.status_code == 201:
             data = response.json()
             big_a = srp.client_public(group, a)
@@ -320,6 +330,34 @@ class Device:
             self.device_id = data["device"]["device_id"]
             self.account_id = data["account_id"]
         return response
+
+    def reauth_srp(
+        self, password: str, *, tamper: bool = False
+    ) -> tuple[httpx.Response, dict[str, str] | None]:
+        """Step-up by password for the dangerous account actions: the handshake and the proof
+        to put in `reauth.srp`."""
+        group = srp.GROUP_4096
+        a = srp.new_ephemeral()
+        start = self.post(
+            "/otp/v1/account/reauth/srp",
+            {"srp_a": b64.encode(group.pad(srp.client_public(group, a)))},
+        )
+        if start.status_code != 200:
+            return start, None
+        data = start.json()
+        kek = derive_kek(password, b64.decode(data["password_kdf"]))
+        big_b = int.from_bytes(b64.decode(data["srp_b"]), "big")
+        m1, _ = srp.client_session(
+            group,
+            b64.decode(data["srp_salt"]),
+            data["srp_user_id"].encode(),
+            login_key(kek),
+            a,
+            big_b,
+        )
+        if tamper:
+            m1 = bytes(32)
+        return start, {"session_id": data["session_id"], "srp_m1": b64.encode(m1)}
 
     def head_signature(
         self, vault: Vault, version: int, key_epoch: int, live: dict[str, tuple[int, bytes]]

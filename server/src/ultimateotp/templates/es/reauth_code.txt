@@ -1,0 +1,7 @@
+Subject: Confirma una acción delicada en UltimateOTP
+
+Tu código de confirmación de UltimateOTP es $code.
+
+Caduca en $minutes minutos y solo sirve una vez. Hace falta para eliminar tu cuenta o para cambiar su correo electrónico.
+
+Si no lo has pedido tú, un dispositivo con la sesión iniciada en tu cuenta está intentando hacerlo. Abre UltimateOTP en un dispositivo de confianza, revisa "Sesiones activas" y cierra las que no reconozcas. No compartas este código.

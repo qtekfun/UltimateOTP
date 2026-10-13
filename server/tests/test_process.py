@@ -9,6 +9,7 @@ settings parsing or migration path fails here and not in the Android job.
 
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -81,11 +82,19 @@ def api(tmp_path: Path) -> Iterator[tuple[str, subprocess.Popen[bytes]]]:
         process.wait(timeout=10)
 
 
+def _contract_version() -> str:
+    """`info.version` of contracts/openapi.yaml: the one place the API version is written."""
+    text = (Path(__file__).resolve().parents[2] / "contracts" / "openapi.yaml").read_text()
+    match = re.search(r"^info:\n(?:[ ]+.*\n)*?[ ]+version:\s*['\"]?([0-9][^'\"\s]*)", text, re.M)
+    assert match, "no info.version in contracts/openapi.yaml"
+    return match.group(1)
+
+
 def test_api_process_serves_the_contract_routes(api: tuple[str, subprocess.Popen[bytes]]) -> None:
     url, _ = api
     status, info = _get(f"{url}/otp/v1/server-info")
     assert status == 200
-    assert info["api_version"] == "1.1.0"
+    assert info["api_version"] == _contract_version()
     # Unknown account: attributes are a decoy, never a 404 that reveals who has an account.
     request = urllib.request.Request(  # noqa: S310
         f"{url}/otp/v1/srp/attributes",

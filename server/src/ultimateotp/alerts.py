@@ -6,8 +6,9 @@ notifications (decision 7).
 Everything goes through one background worker thread, so a slow relay never delays an API
 answer and the timing of a request does not reveal whether an email was sent (which would tell
 an attacker whether an address has an account). Messages carry event names, device labels,
-client addresses and times only: never a token, a key, a wrap, a blob or a password. The one
-secret-like value ever sent is the login code itself, to the account's own address.
+anonymized client ids (anon.py) and times only: never a token, a key, a wrap, a blob or a
+password. The one secret-like value ever sent is the login code itself, to the account's own
+address.
 
 SMTP is STARTTLS only (Resend: smtp.resend.com:587, user `resend`, the API key as password from
 a Docker secret). A relay that does not offer STARTTLS gets no credentials and no message.
@@ -24,6 +25,7 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
 
+from ultimateotp.metrics import Metrics
 from ultimateotp.settings import Settings
 
 log = logging.getLogger(__name__)
@@ -85,7 +87,15 @@ class Alerts:
         self.settings = settings
         self.mail_enabled = bool(settings.smtp_host and settings.smtp_from)
         self.ntfy_enabled = bool(settings.ntfy_url)
+        self.metrics: Metrics | None = None
         self._outbox = Outbox(self._deliver)
+
+    def bind_metrics(self, metrics: Metrics) -> None:
+        self.metrics = metrics
+
+    def _count(self, name: str, result: str) -> None:
+        if self.metrics is not None:
+            self.metrics.inc(name, result=result)
 
     def email(self, to: str, subject: str, body: str) -> None:
         if self.mail_enabled:
@@ -102,9 +112,17 @@ class Alerts:
 
     def _deliver(self, message: object) -> None:
         if isinstance(message, Email):
-            self._send_email(message)
+            metric, send = "uotp_emails_total", self._send_email
         elif isinstance(message, Notice):
-            self._send_ntfy(message)
+            metric, send = "uotp_notifications_total", self._send_ntfy
+        else:
+            return
+        try:
+            send(message)  # type: ignore[arg-type]
+        except Exception:
+            self._count(metric, "failed")
+            raise
+        self._count(metric, "sent")
 
     def _send_email(self, message: Email) -> None:
         s = self.settings

@@ -9,8 +9,9 @@ or a key) are replaced by `[REDACTED]`.
 
 `security_event` writes one line on the `ultimateotp.security` logger with a stable `event`
 name (`auth.failure`, `enroll.success`, `device.revoked`, `vault.conflict`, ...) and flat fields,
-for CrowdSec or a SIEM. `AccessLog` logs every request with the resolved client address, the
-method, the path without the query string, the status and the duration.
+for CrowdSec or a SIEM. `AccessLog` logs every request with the anonymized client id (never an
+address, anon.py), the method, the route template's path without the query string, the status and
+the duration, and feeds the latency histogram.
 """
 
 import json
@@ -23,11 +24,16 @@ from typing import Any, TextIO, override
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from ultimateotp.anon import SCOPE_KEY, ClientContext
+from ultimateotp.metrics import Metrics
+
 REDACTED = "[REDACTED]"
 FIELDS_ATTR = "uotp_fields"
 SECURITY_LOGGER = "ultimateotp.security"
 ACCESS_LOGGER = "ultimateotp.access"
 MAX_FIELD_CHARS = 256
+# A stream that lives for an hour has no meaningful latency (uotp_sse_connections_total counts it).
+EVENTS_ROUTE = "/otp/v1/events"
 
 _TOKEN = re.compile(r"\buo[ep]_[A-Za-z0-9_-]{20,}")
 _BEARER = re.compile(r"(?i)\b(bearer\s+)[^\s,;\"']+")
@@ -40,7 +46,24 @@ _SECRET_KEY = re.compile(
 )
 
 
+# Defence in depth for the anonymization rule (anon.py): no log line carries a client address.
+# The callers never pass one; this catches one that slipped into a message or an exception.
+_IPV4 = re.compile(r"(?<![\w.])(?!0\.0\.0\.0(?![\w.]))(?:\d{1,3}\.){3}\d{1,3}(?![\w.])")
+_IPV6 = re.compile(
+    r"(?<![\w:])(?:(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}"
+    r"|(?:[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4}){0,6})?::(?:[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4}){0,6})?"
+    r"(?=[0-9A-Fa-f]|\b))(?![\w:])"
+)
+ADDRESS_MASK = "[ip]"
+
+
+def scrub_addresses(text: str) -> str:
+    text = _IPV4.sub(ADDRESS_MASK, text)
+    return _IPV6.sub(lambda m: m.group(0) if m.group(0) == "::" else ADDRESS_MASK, text)
+
+
 def redact(text: str) -> str:
+    text = scrub_addresses(text)
     text = _TOKEN.sub(REDACTED, text)
     text = _BEARER.sub(lambda m: m.group(1) + REDACTED, text)
     text = _SIG_HEADER.sub(lambda m: m.group(1) + REDACTED, text)
@@ -116,10 +139,11 @@ def security_event(
 
 
 class AccessLog:
-    """Plain ASGI middleware, inside `ClientAddress` so it sees the resolved client."""
+    """Plain ASGI middleware, inside `ClientIdentity` so it sees the anonymized client."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, metrics: Metrics | None = None) -> None:
         self._app = app
+        self._metrics = metrics
         self._log = logging.getLogger(ACCESS_LOGGER)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -138,9 +162,10 @@ class AccessLog:
         try:
             await self._app(scope, receive, send_wrapper)
         finally:
+            elapsed = time.monotonic() - start
             path = str(scope.get("path", ""))
-            peer = scope.get("client")
             level = logging.DEBUG if path in ("/healthz", "/readyz", "/metrics") else logging.INFO
+            context = scope.get(SCOPE_KEY)
             self._log.log(
                 level,
                 "request",
@@ -150,8 +175,20 @@ class AccessLog:
                         "method": scope.get("method"),
                         "path": path[:MAX_FIELD_CHARS],
                         "status": status,
-                        "duration_ms": round((time.monotonic() - start) * 1000, 1),
-                        "client_ip": peer[0] if peer else None,
+                        "duration_ms": round(elapsed * 1000, 1),
+                        "client_id": context.client_id
+                        if isinstance(context, ClientContext)
+                        else None,
                     }
                 },
             )
+            route = scope.get("route")
+            template = getattr(route, "path", None)
+            if self._metrics is not None and template != EVENTS_ROUTE:
+                self._metrics.observe(
+                    "uotp_http_request_duration_seconds",
+                    elapsed,
+                    method=str(scope.get("method", "GET")),
+                    route=template if isinstance(template, str) else "unmatched",
+                    status=f"{status // 100}xx",
+                )
