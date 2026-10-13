@@ -1,0 +1,152 @@
+# SPDX-FileCopyrightText: 2026 UltimateOTP contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Prometheus alerting rules for the UltimateOTP server (docs/deploy.md §9).
+#
+# Assumes the scrape job is called `ultimateotp` (rename it below if yours is not). Check with:
+#   docker run --rm --entrypoint promtool -v "$PWD":/m:ro \
+#     quay.io/prometheus/prometheus:v3.15.0 check rules /m/alerts.yml
+# Metric names: server/src/ultimateotp/metrics.py. No rule uses a personal label: there are none.
+
+groups:
+  - name: ultimateotp.availability
+    rules:
+      - alert: UltimateOTPDown
+        expr: up{job="ultimateotp"} == 0 or absent(up{job="ultimateotp"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: The UltimateOTP server is down or not scraped
+          description: >-
+            Prometheus has not been able to scrape the server for 2 minutes (or the job does
+            not exist). Devices keep working offline; sync and logins are unavailable. Check
+            `docker compose ps` and `docker compose logs api` on the host, and /readyz.
+
+      - alert: UltimateOTPServerErrors
+        expr: sum(rate(uotp_http_request_duration_seconds_count{status="5xx"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: The UltimateOTP server keeps answering 5xx
+          description: >-
+            {{ $value | humanize }} requests per second ended in a server error for 10 minutes.
+            The api logs the exception (no secrets) as `unhandled error`.
+
+      - alert: UltimateOTPSlowRequests
+        expr: >-
+          histogram_quantile(0.95,
+            sum by (le) (rate(uotp_http_request_duration_seconds_bucket[10m]))) > 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 95th percentile request latency above 1 s
+          description: >-
+            p95 is {{ $value | humanizeDuration }}. Look at the database size, the host, and
+            whether a client is hammering one route (dashboard, "Latency by route").
+
+  - name: ultimateotp.abuse
+    rules:
+      - alert: UltimateOTPAuthFailuresSpike
+        expr: >-
+          sum(increase(uotp_logins_total{result=~"srp_failure|email_code_failure|locked"}[10m])) > 20
+        labels:
+          severity: warning
+        annotations:
+          summary: Many failed logins in 10 minutes
+          description: >-
+            {{ $value | humanize }} wrong passwords, wrong email codes or locked-account hits in
+            10 minutes. Someone is guessing; the api blocks single clients on its own (see
+            UltimateOTPManyBlocks). Per-account lockouts: uotp_lockouts_total.
+
+      - alert: UltimateOTPSignatureFailuresSpike
+        expr: sum(increase(uotp_events_total{event="auth.failure"}[10m])) > 50
+        labels:
+          severity: warning
+        annotations:
+          summary: Many rejected signed requests in 10 minutes
+          description: >-
+            Unknown devices, bad signatures, stale clocks or replays: {{ $value | humanize }} in
+            10 minutes. A revoked device retrying produces a trickle, not this.
+
+      - alert: UltimateOTPManyBlocks
+        expr: sum(increase(uotp_blocks_total[1h])) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: Several clients were blocked in the last hour
+          description: >-
+            {{ $value | humanize }} temporary blocks in 1 hour. List them with
+            `docker compose exec api ultimateotp blocks list`.
+
+      - alert: UltimateOTPBlockedClientsNow
+        expr: uotp_blocked_clients > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 10 clients are blocked at once
+          description: >-
+            {{ $value }} clients are blocked right now: a distributed guessing run, or a
+            misconfigured UOTP_TRUSTED_PROXIES that makes every client look the same.
+
+  - name: ultimateotp.mail
+    rules:
+      - alert: UltimateOTPEmailsFailing
+        expr: sum(increase(uotp_emails_total{result="failed"}[15m])) > 2
+        labels:
+          severity: warning
+        annotations:
+          summary: The server cannot deliver email
+          description: >-
+            {{ $value | humanize }} messages failed in 15 minutes. Login codes are not
+            arriving: check the relay, the Resend API key secret and `docker compose logs api`
+            (`outbound Email failed`).
+
+      - alert: UltimateOTPNotificationsFailing
+        expr: sum(increase(uotp_notifications_total{result="failed"}[30m])) > 2
+        labels:
+          severity: info
+        annotations:
+          summary: ntfy notifications are failing
+          description: The ntfy server or token is not accepting the server's notices.
+
+  - name: ultimateotp.storage
+    rules:
+      - alert: UltimateOTPStorageGrowth
+        expr: >-
+          uotp_database_bytes > 50e6
+          and uotp_database_bytes > 2 * (uotp_database_bytes offset 1d)
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: The database doubled in a day
+          description: >-
+            {{ $value | humanize1024 }}B now. Expected growth is slow (a few KiB per commit). Is
+            a client re-uploading? Check history size (uotp_history_bytes) and the caps
+            UOTP_HISTORY_MAX_BYTES / UOTP_HISTORY_MAX_VERSIONS.
+
+      - alert: UltimateOTPStorageFillingUp
+        expr: predict_linear(uotp_database_bytes[6h], 14 * 24 * 3600) > 1e9
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: At this rate the database passes 1 GB within two weeks
+          description: >-
+            The trend of the last 6 hours reaches {{ $value | humanize1024 }}B in 14 days.
+            This is a single-owner server: that is far more than it should ever need.
+
+      - alert: UltimateOTPHistoryLarge
+        expr: uotp_history_bytes > 0.75 * 32 * 1024 * 1024 * max(uotp_accounts)
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: The vault history is close to its per-account cap
+          description: >-
+            {{ $value | humanize1024 }}B of previous blobs. The default cap is 32 MiB per
+            account (UOTP_HISTORY_MAX_BYTES); pruning keeps it bounded, this is an FYI.
