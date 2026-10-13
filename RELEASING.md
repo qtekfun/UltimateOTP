@@ -28,6 +28,8 @@ Without the `UOTP_*` variables, `./gradlew assembleRelease` builds an unsigned A
    ```sh
    git tag -a v0.1.0 -m "UltimateOTP 0.1.0" && git push origin v0.1.0
    ```
-3. The Release workflow checks that the tag matches `versionName`, runs `./gradlew check assembleRelease`, verifies the signature and version, and publishes the GitHub Release with `UltimateOTP-<version>.apk` and its SHA-256. 0.x versions and `-rc` tags are published as pre-releases.
+3. The Release workflow checks that the tag matches `versionName`, runs `./gradlew check assembleRelease`, verifies the signature and version, pushes the server image `ghcr.io/qtekfun/ultimateotp-server:<version>` (amd64 + arm64), and publishes the GitHub Release with `UltimateOTP-<version>.apk` and its SHA-256. 0.x versions and `-rc` tags are published as pre-releases.
 
 A manual run of the workflow (Actions → Release → Run workflow) is a dry run: it builds and checks everything and publishes nothing.
+
+The GHCR package `ultimateotp-server` is created private on its first push; make it public once (GitHub → Packages → ultimateotp-server → Package settings → Change visibility) so hosts can pull it without logging in.
