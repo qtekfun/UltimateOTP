@@ -14,9 +14,11 @@
 #   gitleaks      secrets in the history
 name: CI
 
+# A branch with an open PR runs once, as the PR; `push` covers master (and tags are the release
+# workflow's business).
 on:
   push:
-    branches: ["**"]
+    branches: [master]
   pull_request:
 
 permissions:
@@ -147,13 +149,16 @@ jobs:
           - name: x86_64, API 34
             api: 34
             arch: x86_64
+            target: default
             suite: full
             experimental: false
-          # A 32-bit ABI, where size_t is 4 bytes (armeabi-v7a on real phones). Unverified when
-          # written: it only runs the Argon2id test, and may not fail the workflow.
+          # A 32-bit ABI, where size_t is 4 bytes (armeabi-v7a on real phones). It only runs the
+          # Argon2id test, and may not fail the workflow. There is no `default` x86 image for API 30
+          # on the runners ("Failed to find package"), so this one uses the Google APIs image.
           - name: x86 (32-bit), API 30
             api: 30
             arch: x86
+            target: google_apis
             suite: kdf
             experimental: true
     steps:
@@ -211,7 +216,7 @@ jobs:
         with:
           api-level: ${{ matrix.api }}
           arch: ${{ matrix.arch }}
-          target: default
+          target: ${{ matrix.target }}
           profile: pixel_6
           # 1 GiB of Argon2id needs 1.5 GiB free to be chosen: give the guest room to show that.
           ram-size: 4096M
