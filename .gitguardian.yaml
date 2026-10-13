@@ -1,0 +1,14 @@
+# GitGuardian (ggshield and the GitHub integration) configuration.
+# https://docs.gitguardian.com/ggshield-docs/reference/configuration
+version: 2
+
+secret:
+  # Test code uses fixed keys, passwords and seeds on purpose (deterministic crypto vectors,
+  # fake servers, throw-away fixtures). They protect nothing. Everything else is still scanned.
+  ignored_paths:
+    - "**/src/test/**"
+    - "**/src/androidTest/**"
+    - "**/src/androidTestDebug/**"
+    - "**/src/testFixtures/**"
+    - "server/tests/**"
+    - "docs/crypto-vectors/**"
