@@ -21,7 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from tests.client import Device, Vault, derive_kek, kdf, new_item_id, seal_for
+from tests.client import Device, Vault, derive_kek, kdf, login_key, new_item_id, seal_for
 from tests.conftest import PASSWORD, Server
 from ultimateotp import b64, db, signing
 from ultimateotp.logging import JsonFormatter, RedactingFilter
@@ -133,6 +133,15 @@ def test_server_never_sees_plaintext(server: Server, log_output: io.StringIO) ->
             a.post(f"/otp/v1/pairings/{pairing['pairing_id']}/approve", approve).status_code == 200
         )
 
+        # Fourth device: password login from anywhere (SRP); the password never travels.
+        server.service.set_email_check(account_id, enabled=False)
+        with closing(db.connect(server.settings.database_file)) as conn:
+            conn.execute(
+                "UPDATE accounts SET email = 'canary@example.org' WHERE id = ?", (account_id,)
+            )
+        d = Device(http, "Laptop D")
+        assert d.srp_login("canary@example.org", PASSWORD).status_code == 201
+
         # Edit, delete, revoke.
         assert a.commit(vault, {one: {**item, "digits": 8}}).status_code == 200
         assert a.commit(vault, deletes=[two]).status_code == 200
@@ -160,7 +169,9 @@ def test_server_never_sees_plaintext(server: Server, log_output: io.StringIO) ->
         "recovery KEK": _forms(salt_free_kek),
     }
     params = b64.decode(_password_kdf(server, account_id))
-    needles["password KEK"] = _forms(derive_kek(PASSWORD, params))
+    kek_pw = derive_kek(PASSWORD, params)
+    needles["password KEK"] = _forms(kek_pw)
+    needles["SRP login subkey"] = _forms(login_key(kek_pw))
 
     for where, haystack in (
         ("received by the server", bytes(recorder.received)),

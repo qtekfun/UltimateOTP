@@ -126,16 +126,19 @@ class Settings(BaseSettings):
         parse_networks(value)
         return value
 
-    @model_validator(mode="after")
-    def _smtp_or_explicitly_disabled(self) -> "Settings":
-        """Decision 13: no SMTP, no start, unless email verification is explicitly disabled."""
+    def require_email_transport(self) -> None:
+        """Decision 13: the api (and the CLI commands that email) refuse to start without SMTP
+        unless email verification is explicitly disabled. `migrate` and `backup` do not care."""
         if self.email_verification == "enabled" and not (
             self.smtp_host and self.smtp_from and self.smtp_password
         ):
-            raise ValueError(
+            raise SystemExit(
                 "email verification needs UOTP_SMTP_HOST, UOTP_SMTP_FROM and the Docker secret"
                 " uotp_smtp_password; set UOTP_EMAIL_VERIFICATION=disabled only for development"
             )
+
+    @model_validator(mode="after")
+    def _valid_ntfy_url(self) -> "Settings":
         if self.ntfy_url and not self.ntfy_url.startswith(("https://", "http://")):
             raise ValueError("UOTP_NTFY_URL must be an http(s) URL")
         return self

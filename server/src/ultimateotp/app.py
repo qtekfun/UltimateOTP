@@ -99,6 +99,7 @@ def create_app(
     limiter: RateLimiter | None = None,
     alerts: Alerts | None = None,
 ) -> ASGIApp:
+    settings.require_email_transport()
     clock = clock or SystemClock()
     metrics = Metrics()
     broker = Broker()

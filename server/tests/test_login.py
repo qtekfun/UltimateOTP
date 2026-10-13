@@ -13,7 +13,8 @@ from pydantic import ValidationError
 from tests.client import Device, Vault, unwrap_with_password
 from tests.conftest import LAN_CLIENT, PASSWORD, PUBLIC_CLIENT, Bootstrapped, FakeClock, Server
 from tests.fakes import NtfyInbox, ntfy_server
-from ultimateotp import b64
+from ultimateotp import b64, cli
+from ultimateotp.app import create_app
 from ultimateotp.settings import Settings
 
 EMAIL = "owner@example.org"
@@ -36,10 +37,22 @@ def owner(server: Server, lan: TestClient) -> Bootstrapped:
 # ---------------------------------------------------------------- settings
 
 
-def test_refuses_to_start_without_smtp(make_settings: Callable[..., Settings]) -> None:
-    with pytest.raises(ValidationError, match="UOTP_EMAIL_VERIFICATION=disabled"):
-        make_settings(email_verification="enabled")
+def test_refuses_to_start_without_smtp(
+    make_settings: Callable[..., Settings], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    enabled = make_settings(email_verification="enabled")
+    with pytest.raises(SystemExit, match="UOTP_EMAIL_VERIFICATION=disabled"):
+        create_app(enabled)
+    monkeypatch.setenv("UOTP_DATA_DIR", str(enabled.data_dir))
+    monkeypatch.setenv("UOTP_MIGRATIONS_DIR", str(enabled.migrations_dir))
+    monkeypatch.delenv("UOTP_EMAIL_VERIFICATION", raising=False)
+    with pytest.raises(SystemExit):
+        cli.main(["account-create", "--email", "a@example.org"])
+    # Migrations never need SMTP.
+    assert cli.main(["migrate"]) == 0
     assert make_settings(email_verification="disabled").email_enabled is False
+    with pytest.raises(ValidationError):
+        make_settings(ntfy_url="ftp://example.org/x")
     defaults = make_settings()
     assert defaults.enrollment_scope == "anywhere"
     assert defaults.pairing_scope == "lan"

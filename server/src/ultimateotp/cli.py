@@ -146,6 +146,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         applied = db.migrate(settings.database_file, settings.migrations_dir)
         log.info("migrate: %d migration(s) applied: %s", len(applied), [m.name for m in applied])
         return 0
+    if args.command in ("account-create", "token-create", "device-revoke"):
+        # These may email (verification code) or notify; never silently drop that.
+        settings.require_email_transport()
     service = _service(settings)
     try:
         _admin(service, settings, args)

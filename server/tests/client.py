@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 UltimateOTP contributors
 # SPDX-License-Identifier: GPL-3.0-or-later
 """A reference client for the tests: device keys, request signing, signed heads, and the
-client-side crypto of docs/crypto-format.md v1 (branch feat/android, commit c90fd7b): wraps
+client-side crypto of docs/crypto-format.md v1 (branch feat/android, v1.1 at commit 6f05a51): wraps
 (§4), item blobs (§6), sealed vault keys (§5.3). `tests/test_crypto_vectors.py` checks this code
 against that document's vectors, so the server tests run on real v1 ciphertext.
 """
@@ -130,8 +130,9 @@ class Vault:
 
 
 def login_key(kek_pw: bytes) -> bytes:
-    """The SRP password: a subkey of KEK_pw, never the KEK (decision 6; contract proposal)."""
-    return kdf(kek_pw, 1, "uotplogn")
+    """The SRP password: a subkey of KEK_pw, never the KEK (crypto-format v1.1 §4.4, Ente's
+    construction: the first 16 bytes of KDF(KEK_pw, 1, "loginctx"))."""
+    return kdf(kek_pw, 1, "loginctx")[:16]
 
 
 def srp_setup(kek_pw: bytes) -> dict[str, str]:
