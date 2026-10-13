@@ -14,12 +14,15 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from ultimateotp import b64, formats, ids, signing, srp
+from ultimateotp import anon, b64, formats, i18n, ids, signing, srp
+from ultimateotp.account import AccountManager
 from ultimateotp.alerts import Alerts
+from ultimateotp.blocking import ABUSE_EVENTS, Blocker
 from ultimateotp.clock import Clock
 from ultimateotp.db import Database
 from ultimateotp.errors import ApiError
 from ultimateotp.events import Broker, Event
+from ultimateotp.history import History, HistoryPrunedError, NoSuchVersionError
 from ultimateotp.logging import security_event
 from ultimateotp.login import Login
 from ultimateotp.metrics import Metrics
@@ -40,6 +43,7 @@ PENDING = "pending"
 MAX_TIMESTAMP_DIGITS = 12
 SRP_SALT_MIN_BYTES = 16
 NONCE_PURGE_EVERY_S = 60
+STATS_TTL_S = 30.0
 
 
 @dataclass(frozen=True)
@@ -53,9 +57,9 @@ class SignedRequest:
     nonce: str | None
     signature: str | None
     body: bytes
-    # Not signed: the resolved client address and the optional `X-UOTP-App-Version` header,
-    # kept as session metadata (decision 9).
-    client_ip: str | None = None
+    # Not signed: the anonymized client id (never an address, anon.py) and the optional
+    # `X-UOTP-App-Version` header, kept as session metadata (decision 9).
+    client_id: str | None = None
     app_version: str | None = None
 
 
@@ -88,14 +92,37 @@ class Service:
         self.broker = broker
         self.metrics = metrics
         self.alerts = alerts or Alerts(settings)
+        self.alerts.bind_metrics(metrics)
+        self.history = History(settings)
+        self.blocker = Blocker(
+            settings, clock, metrics, db, emit=self.event, notify=self.alerts.notify
+        )
         self.login = Login(self)
+        self.accounts = AccountManager(self)
         self._last_nonce_purge = 0
+        self._stats: tuple[float, dict[str, float]] | None = None
 
     # ------------------------------------------------------------------ helpers
 
     def event(self, name: str, *, level: int = logging.INFO, **fields: Any) -> None:
+        """A security event: logged with the caller's anonymized client id (never an address),
+        counted, and, when it is a failed or abusive attempt, counted toward a block."""
+        context = anon.current()
+        if context is not None:
+            fields.setdefault("client_id", context.client_id)
         security_event(name, level=level, **fields)
         self.metrics.inc("uotp_events_total", name)
+        if name in ABUSE_EVENTS:
+            self.blocker.record(context, name)
+
+    def language(self, explicit: str | None = None, stored: str | None = None) -> str:
+        """`es` or `en` for the emails of this request (i18n.pick)."""
+        context = anon.current()
+        return i18n.pick(explicit, context.accept_language if context else None, stored)
+
+    def notice_to(self, email: str, template: str, lang: str, **params: str | int) -> None:
+        subject, body = i18n.render(lang, template, **params)
+        self.alerts.email(email, subject, body)
 
     def _decode(self, value: str, max_bytes: int, field: str, sizes: tuple[int, ...] = ()) -> bytes:
         """Strict base64url, non-empty, at most `max_bytes`, and one of `sizes` when given
@@ -203,6 +230,10 @@ class Service:
             raise _unauthorized()
         return req.nonce, req.signature
 
+    def check_window(self, req: SignedRequest) -> None:
+        """Headers and timestamp window only (raises `stale_request` with `server_time`)."""
+        self._check_signed(req)
+
     def _verify(self, req: SignedRequest, public_key: str, signature: str) -> None:
         message = signing.request_message(
             req.method,
@@ -239,7 +270,8 @@ class Service:
             raise _unauthorized()
         with self.db.read() as conn:
             row = conn.execute(
-                "SELECT id, account_id, ed25519_public_key, revoked_at FROM devices WHERE id = ?",
+                "SELECT d.id, d.account_id, d.ed25519_public_key, d.revoked_at, a.lang"
+                " FROM devices d JOIN accounts a ON a.id = d.account_id WHERE d.id = ?",
                 (device_id,),
             ).fetchone()
         if row is None:
@@ -252,8 +284,15 @@ class Service:
             conn.execute(
                 "UPDATE devices SET last_seen_at = ?, last_ip = COALESCE(?, last_ip),"
                 " app_version = COALESCE(?, app_version) WHERE id = ?",
-                (self.clock.now(), req.client_ip, req.app_version, device_id),
+                (self.clock.now(), req.client_id, req.app_version, device_id),
             )
+            # The language the device last asked for, for notices no request triggers.
+            context = anon.current()
+            asked = i18n.from_accept_language(context.accept_language if context else None)
+            if asked is not None and asked != row["lang"]:
+                conn.execute(
+                    "UPDATE accounts SET lang = ? WHERE id = ?", (asked, row["account_id"])
+                )
         return DeviceAuth(device_id=device_id, account_id=row["account_id"])
 
     def verify_pending(
@@ -269,7 +308,7 @@ class Service:
     # ------------------------------------------------------------------ admin (CLI)
 
     def create_account(
-        self, email: str | None = None, *, email_check: bool = True
+        self, email: str | None = None, *, email_check: bool = True, lang: str | None = None
     ) -> tuple[str, str, int]:
         """Account + bootstrap token (admin CLI). With email verification on, the address gets
         a code that the bootstrap enrollment must present once (decision 13)."""
@@ -282,14 +321,15 @@ class Service:
             ):
                 raise ApiError(409, "email_taken")
             conn.execute(
-                "INSERT INTO accounts (id, created_at, email, email_check) VALUES (?, ?, ?, ?)",
-                (account_id, self.clock.now(), email, int(email_check)),
+                "INSERT INTO accounts (id, created_at, email, email_check, lang)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (account_id, self.clock.now(), email, int(email_check), i18n.from_tag(lang)),
             )
             token, expires = self._insert_token(conn, account_id, None)
             if email is not None and self.settings.email_enabled:
                 code = self.login.issue_code(conn, email)
         if email is not None and code is not None:
-            self.login.send_code(email, code)
+            self.login.send_code(email, code, i18n.from_tag(lang) or i18n.DEFAULT)
         self.event("account.created", account_id=account_id)
         return account_id, token, expires
 
@@ -308,17 +348,22 @@ class Service:
             row = conn.execute("SELECT email FROM accounts WHERE id = ?", (account_id,)).fetchone()
         return None if row is None else row["email"]
 
-    def _alert(self, account_id: str, title: str, body: str, *, email_notice: bool = False) -> None:
-        """ntfy always (decision 7); an email notice too for recovery and rotation (13)."""
+    def _alert(
+        self,
+        account_id: str,
+        title: str,
+        body: str,
+        *,
+        template: str | None = None,
+        account_lang: str | None = None,
+        **params: str | int,
+    ) -> None:
+        """ntfy always (decision 7, English: it is for the owner); an email notice too when a
+        `template` is given, in the language of this request or the account's."""
         self.alerts.notify(title, body)
-        email = self.account_email(account_id) if email_notice else None
-        if email:
-            self.alerts.email(
-                email,
-                title,
-                body + "\nIf this was not you, revoke the devices"
-                " you do not recognize and change your password.\n",
-            )
+        email = self.account_email(account_id) if template else None
+        if email and template:
+            self.notice_to(email, template, self.language(None, account_lang), **params)
 
     def _insert_token(
         self, conn: sqlite3.Connection, account_id: str, created_by: str | None
@@ -368,6 +413,70 @@ class Service:
             ).fetchall()
         return [self.device_dict(r) for r in rows]
 
+    def storage_stats(self) -> dict[str, float]:
+        """Totals for the storage gauges, cached for 30 s so a scrape never scans a big table
+        twice in a row."""
+        now = self.clock.monotonic()
+        cached = self._stats
+        if cached is not None and now - cached[0] < STATS_TTL_S:
+            return cached[1]
+        stats: dict[str, float] = {}
+        try:
+            with self.db.read() as conn:
+                one = conn.execute
+                stats["accounts"] = one("SELECT COUNT(*) FROM accounts").fetchone()[0]
+                stats["devices_active"] = one(
+                    "SELECT COUNT(*) FROM devices WHERE revoked_at IS NULL"
+                ).fetchone()[0]
+                stats["vault_items"] = one(
+                    "SELECT COUNT(*) FROM items WHERE deleted = 0"
+                ).fetchone()[0]
+                stats["history_versions"] = one("SELECT COUNT(*) FROM vault_versions").fetchone()[0]
+                row = one("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM item_history").fetchone()
+                stats["history_items"], stats["history_bytes"] = row[0], row[1]
+        except sqlite3.Error:
+            stats = {}
+        size = 0
+        for suffix in ("", "-wal"):
+            try:
+                size += self.db.path.with_name(self.db.path.name + suffix).stat().st_size
+            except OSError:
+                continue
+        stats["database_bytes"] = size
+        self._stats = (now, stats)
+        return stats
+
+    def maintenance(self) -> dict[str, int]:
+        """The periodic housekeeping (app.py runs it in the background every
+        `UOTP_MAINTENANCE_INTERVAL_S`; `ultimateotp purge` runs it once): history pruning,
+        tombstone compaction, expired codes and handshakes, old block rows."""
+        now = self.clock.now()
+        versions = blobs = 0
+        with self.db.write() as conn:
+            for row in conn.execute(
+                "SELECT id, vault_version FROM accounts WHERE id IN"
+                " (SELECT account_id FROM vault_versions UNION SELECT account_id FROM item_history)"
+            ).fetchall():
+                v, b = self.history.prune_account(conn, row["id"], now, row["vault_version"])
+                versions += v
+                blobs += b
+            tombstones = self.history.compact_tombstones(conn, now)
+            codes = conn.execute("DELETE FROM email_codes WHERE expires_at < ?", (now,)).rowcount
+            codes += conn.execute("DELETE FROM email_changes WHERE expires_at < ?", (now,)).rowcount
+            sessions = conn.execute(
+                "DELETE FROM srp_sessions WHERE expires_at < ?", (now,)
+            ).rowcount
+        blocks = self.blocker.prune()
+        self.blocker.flush()
+        return {
+            "history_versions": versions,
+            "history_items": blobs,
+            "tombstones": tombstones,
+            "expired_codes": codes,
+            "srp_sessions": sessions,
+            "blocks": blocks,
+        }
+
     def purge(self) -> dict[str, int]:
         """Deletes expired tokens, finished or expired pairings and old nonces."""
         now = self.clock.now()
@@ -382,7 +491,12 @@ class Service:
                 "DELETE FROM request_nonces WHERE seen_at < ?",
                 (now - 2 * self.settings.signature_max_skew_s,),
             ).rowcount
-        return {"enrollment_tokens": tokens, "pairings": pairings, "request_nonces": nonces}
+        return {
+            "enrollment_tokens": tokens,
+            "pairings": pairings,
+            "request_nonces": nonces,
+            **self.maintenance(),
+        }
 
     # ------------------------------------------------------------------ enrollment
 
@@ -455,13 +569,19 @@ class Service:
                 now,
                 now,
                 device.app_version or req.app_version,
-                req.client_ip,
+                req.client_id,
             ),
         )
         conn.execute(
             "UPDATE accounts SET devices_revision = devices_revision + 1 WHERE id = ?",
             (account_id,),
         )
+        context = anon.current()
+        asked = i18n.from_accept_language(context.accept_language if context else None)
+        if asked is not None:
+            conn.execute(
+                "UPDATE accounts SET lang = ? WHERE id = ? AND lang IS NULL", (asked, account_id)
+            )
         row: Row = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
         return row
 
@@ -491,7 +611,6 @@ class Service:
             account_id=account_id,
             device_id=device["device_id"],
             via=device["enrolled_via"],
-            client_ip=req.client_ip,
         )
         self.broker.publish(
             account_id, Event("devices", {"devices_revision": result["head"]["devices_revision"]})
@@ -500,7 +619,7 @@ class Service:
             account_id,
             "UltimateOTP: new device signed in",
             f'Device "{device["label"]}" ({device["enrolled_via"]}) was added to your account'
-            f" from {req.client_ip or 'an unknown address'}.",
+            f" from client {req.client_id or 'unknown'}.",
         )
 
     def key_attributes(self, conn: sqlite3.Connection, account_id: str) -> dict[str, Any]:
@@ -527,7 +646,8 @@ class Service:
             and account["email_verified_at"] is None
         )
         if verify_email:
-            self.login.require_code(account["email"], body.email_code, req.client_ip or "unknown")
+            self.check_window(req)  # a skewed clock must not burn the emailed code
+            self.login.require_code(account["email"], body.email_code)
         now = self.clock.now()
         with self.db.write() as conn:
             token_row = self._valid_token(conn, token)
@@ -578,7 +698,8 @@ class Service:
             "UltimateOTP: recovery data fetched",
             "A new device fetched your password and recovery-key wraps with an enrollment token"
             " (the password or recovery-key path).",
-            email_notice=True,
+            template="recovery_fetched",
+            account_lang=account["lang"],
         )
         return {
             "account_id": account["id"],
@@ -959,12 +1080,16 @@ class Service:
     def get_vault(self, auth: DeviceAuth, since: int) -> dict[str, Any]:
         with self.db.read() as conn:
             account = self._account(conn, auth.account_id)
+            # A client older than a compacted tombstone cannot learn that deletion from a delta:
+            # it gets the whole set and drops what is missing (VaultChanges.full).
+            full = since == 0 or since < account["tombstones_compacted_through"]
             rows = conn.execute(
                 "SELECT item_id, version, deleted, blob FROM items"
                 " WHERE account_id = ? AND version > ? ORDER BY version, item_id",
-                (auth.account_id, since),
+                (auth.account_id, 0 if full else since),
             ).fetchall()
         return {
+            "full": full,
             "head": self.head(account),
             "items": [
                 {
@@ -977,10 +1102,49 @@ class Service:
             ],
         }
 
+    def vault_history(self, auth: DeviceAuth, limit: int, before: int | None) -> dict[str, Any]:
+        with self.db.read() as conn:
+            account = self._account(conn, auth.account_id)
+            versions, next_before = self.history.list_versions(conn, auth.account_id, limit, before)
+        return {
+            "retention_days": self.settings.history_retention_days,
+            "current_version": account["vault_version"],
+            "versions": versions,
+            "next_before": next_before,
+        }
+
+    def vault_version(self, auth: DeviceAuth, version: int, item_id: str | None) -> dict[str, Any]:
+        with self.db.read() as conn:
+            account = self._account(conn, auth.account_id)
+            try:
+                return self.history.state_at(conn, account, version, item_id)
+            except NoSuchVersionError:
+                raise ApiError(404, "not_found", "no such version yet") from None
+            except HistoryPrunedError:
+                raise ApiError(
+                    410, "history_pruned", "that version is no longer retained"
+                ) from None
+
+    def vault_trash(self, auth: DeviceAuth) -> dict[str, Any]:
+        with self.db.read() as conn:
+            account = self._account(conn, auth.account_id)
+            items = self.history.trash(conn, account)
+        return {"retention_days": self.settings.history_retention_days, "items": items}
+
     def state(self, account_id: str, device_id: str) -> dict[str, Any]:
         """For the SSE stream: account state, plus whether the device is still active."""
         with self.db.read() as conn:
-            account = self._account(conn, account_id)
+            account = conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
+            if account is None:  # deleted while the stream was open
+                return {
+                    "version": 0,
+                    "key_epoch": 0,
+                    "devices_revision": 0,
+                    "rotation_required": False,
+                    "signed_by": None,
+                    "revoked": True,
+                    "deleted": True,
+                }
             device = conn.execute(
                 "SELECT revoked_at FROM devices WHERE id = ?", (device_id,)
             ).fetchone()
@@ -1044,6 +1208,21 @@ class Service:
             )
             raise ApiError(400, "invalid_head_signature")
         now = self.clock.now()
+        if not isinstance(body, RotateRequest):
+            # A rotation clears the history instead (the caller): old-epoch ciphertext goes.
+            self.history.record(
+                conn,
+                account["id"],
+                version=new_version,
+                key_epoch=key_epoch,
+                kind="commit",
+                signed_by=auth.device_id,
+                signature=signature,
+                now=now,
+                upserted=[u.item_id for u in upserts],
+                deleted=list(deletes),
+                previous=self.history.previous_blobs(conn, account["id"], changed),
+            )
         for upsert in upserts:
             conn.execute(
                 "INSERT INTO items (account_id, item_id, version, deleted, blob, blob_sha256,"
@@ -1075,6 +1254,7 @@ class Service:
 
     def _check_base(self, account: Row, base_version: int, head_version: int) -> None:
         if base_version != account["vault_version"]:
+            self.metrics.inc("uotp_conflicts_total", reason="version")
             self.event("vault.conflict", account_id=account["id"], reason="version")
             raise ApiError(
                 409, "version_conflict", "pull, merge and retry", head=self.head(account)
@@ -1087,10 +1267,15 @@ class Service:
             account = self._account(conn, auth.account_id)
             self._check_base(account, body.base_version, body.head.version)
             if body.key_epoch != account["key_epoch"]:
+                self.metrics.inc("uotp_conflicts_total", reason="key_epoch")
                 self.event("vault.conflict", account_id=account["id"], reason="key_epoch")
                 raise ApiError(409, "key_epoch_conflict", head=self.head(account))
             self._apply(conn, auth, account, body)
             account = self._account(conn, auth.account_id)
+            self.history.prune_account(
+                conn, account["id"], self.clock.now(), account["vault_version"]
+            )
+        self.metrics.inc("uotp_commits_total")
         self.event(
             "vault.commit",
             account_id=account["id"],
@@ -1134,6 +1319,20 @@ class Service:
             if any(version != body.head.version for version, _ in live.values()):
                 raise ApiError(400, "incomplete_rotation", "every live item must be re-encrypted")
             self.store_bundle(conn, account["id"], body.keys)
+            self.history.reset(conn, account["id"])
+            self.history.record(
+                conn,
+                account["id"],
+                version=body.head.version,
+                key_epoch=body.new_key_epoch,
+                kind="rotate",
+                signed_by=auth.device_id,
+                signature=body.head.signature,
+                now=now,
+                upserted=[u.item_id for u in body.upserts],
+                deleted=list(body.deletes),
+                previous={},
+            )
             conn.execute("UPDATE accounts SET rotation_required = 0 WHERE id = ?", (account["id"],))
             conn.execute("DELETE FROM device_key_wraps WHERE account_id = ?", (account["id"],))
             conn.executemany(
@@ -1165,8 +1364,11 @@ class Service:
             "UltimateOTP: vault key rotated",
             f"The vault key was rotated to epoch {account['key_epoch']}; every device was"
             " re-keyed.",
-            email_notice=True,
+            template="key_rotated",
+            account_lang=account["lang"],
+            epoch=account["key_epoch"],
         )
+        self.metrics.inc("uotp_rotations_total")
         self._publish_vault(account)
         return self.head(account)
 
