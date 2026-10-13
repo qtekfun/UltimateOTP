@@ -148,3 +148,29 @@ def test_conflict_problem_carries_the_head(
     problem = b.commit(stale, {new_item_id(): {"x": 2}}).json()
     check(problem, "Problem")
     check(problem["head"], "VaultHead")
+
+
+def test_login_responses_validate(server: Server, lan: TestClient) -> None:
+    from tests.test_login import EMAIL, _account  # noqa: PLC0415
+
+    owner = _account(server, lan)
+    check(lan.post("/otp/v1/srp/attributes", json={"email": EMAIL}).json(), "SrpAttributes")
+    check(
+        lan.post("/otp/v1/srp/attributes", json={"email": "x@example.org"}).json(),
+        "SrpAttributes",
+    )
+    check(lan.post("/otp/v1/login/email-code", json={"email": EMAIL}).json(), "Accepted")
+    from ultimateotp import srp  # noqa: PLC0415
+
+    big_a = srp.client_public(srp.GROUP_4096, srp.new_ephemeral())
+    session = lan.post(
+        "/otp/v1/srp/session",
+        json={"email": EMAIL, "srp_a": b64.encode(srp.GROUP_4096.pad(big_a))},
+    )
+    check(session.json(), "SrpSession")
+    dev = Device(lan, "Laptop")
+    login = dev.srp_login(EMAIL, "correct horse battery staple")
+    assert login.status_code == 201
+    check(login.json(), "SrpLoginResponse")
+    check(owner.device.get("/otp/v1/sessions").json(), "SessionList")
+    check(Device(lan).srp_login(EMAIL, "wrong").json(), "Problem")

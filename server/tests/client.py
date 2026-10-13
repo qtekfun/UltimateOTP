@@ -27,7 +27,7 @@ from nacl.bindings import (
 from nacl.public import PrivateKey, PublicKey, SealedBox
 from nacl.signing import SigningKey, VerifyKey
 
-from ultimateotp import b64, signing
+from ultimateotp import b64, signing, srp
 
 PAD_BUCKET = 256
 ALG_ARGON2ID13 = 2
@@ -110,12 +110,16 @@ class Vault:
         result: dict[str, Any] = json.loads(sodium_unpad(padded, PAD_BUCKET))
         return result
 
-    def key_bundle(self, password: str, recovery_key: bytes) -> dict[str, str]:
-        """`KeyBundle` of the contract as §4.2 maps it."""
+    def key_bundle(
+        self, password: str, recovery_key: bytes, *, with_srp: bool = True
+    ) -> dict[str, Any]:
+        """`KeyBundle` of the contract as §4.2 maps it, with the SRP login record."""
         params = params_block(TEST_OPSLIMIT, TEST_MEMLIMIT, secrets.token_bytes(16))
         kek_pw = derive_kek(password, params)
         kek_rk = kdf(recovery_key, 1, "uotprcvy")
+        extra: dict[str, Any] = {"srp": srp_setup(kek_pw)} if with_srp else {}
         return {
+            **extra,
             "password_kdf": b64.encode(params),
             "password_wrap": b64.encode(
                 wrap(1, kek_pw, self.vault_key, self.key_epoch, params)
@@ -123,6 +127,22 @@ class Vault:
             ),
             "recovery_wrap": b64.encode(wrap(2, kek_rk, self.vault_key, self.key_epoch, b"")),
         }
+
+
+def login_key(kek_pw: bytes) -> bytes:
+    """The SRP password: a subkey of KEK_pw, never the KEK (decision 6; contract proposal)."""
+    return kdf(kek_pw, 1, "uotplogn")
+
+
+def srp_setup(kek_pw: bytes) -> dict[str, str]:
+    user_id = str(uuid.uuid4())
+    salt = secrets.token_bytes(16)
+    v = srp.verifier(srp.GROUP_4096, salt, user_id.encode(), login_key(kek_pw))
+    return {
+        "srp_user_id": user_id,
+        "srp_salt": b64.encode(salt),
+        "srp_verifier": b64.encode(srp.GROUP_4096.pad(v)),
+    }
 
 
 def unwrap_with_password(bundle: dict[str, Any], password: str) -> bytes:
@@ -241,6 +261,51 @@ class Device:
         if response.status_code == 201:
             self.device_id = response.json()["device"]["device_id"]
             self.account_id = response.json()["account_id"]
+        return response
+
+    def srp_login(
+        self, email: str, password: str, code: str | None = None, *, tamper: bool = False
+    ) -> httpx.Response:
+        """The whole password login of the contract: attributes, session, verify."""
+        group = srp.GROUP_4096
+        attributes = self.http.post("/otp/v1/srp/attributes", json={"email": email}).json()
+        kek = derive_kek(password, b64.decode(attributes["password_kdf"]))
+        a = srp.new_ephemeral()
+        payload: dict[str, Any] = {
+            "email": email,
+            "srp_a": b64.encode(group.pad(srp.client_public(group, a))),
+        }
+        if code is not None:
+            payload["email_code"] = code
+        session = self.http.post("/otp/v1/srp/session", json=payload)
+        if session.status_code != 200:
+            return session
+        big_b = int.from_bytes(b64.decode(session.json()["srp_b"]), "big")
+        identity = attributes["srp_user_id"].encode()
+        m1, key = srp.client_session(
+            group, b64.decode(attributes["srp_salt"]), identity, login_key(kek), a, big_b
+        )
+        if tamper:
+            m1 = bytes(32)
+        response = self.post(
+            "/otp/v1/srp/verify",
+            {
+                "session_id": session.json()["session_id"],
+                "srp_m1": b64.encode(m1),
+                "device": {
+                    "ed25519_public_key": self.ed25519,
+                    "x25519_public_key": self.x25519,
+                    "label": self.label,
+                    "app_version": "1.0.0-test",
+                },
+            },
+        )
+        if response.status_code == 201:
+            data = response.json()
+            big_a = srp.client_public(group, a)
+            assert b64.decode(data["srp_m2"]) == srp.server_proof(group, big_a, m1, key)
+            self.device_id = data["device"]["device_id"]
+            self.account_id = data["account_id"]
         return response
 
     def head_signature(

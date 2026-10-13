@@ -35,7 +35,10 @@ def test_bootstrap_creates_device_and_stores_opaque_keys(server: Server, lan: Te
     assert body["head"]["version"] == 0
     assert body["head"]["key_epoch"] == 1
     stored = dev.get("/otp/v1/account/keys").json()
-    assert {k: stored[k] for k in keys} == keys
+    wraps = {k: v for k, v in keys.items() if k != "srp"}
+    assert {k: stored[k] for k in wraps} == wraps
+    # The SRP record is stored but never handed back to devices.
+    assert "srp" not in stored
     assert stored["keys_revision"] == 1
     assert stored["device_key"] is None
 
