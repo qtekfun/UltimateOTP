@@ -9,6 +9,8 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.qtekfun.ultimateotp.BuildConfig
+import com.qtekfun.ultimateotp.auth.AuthGate
+import com.qtekfun.ultimateotp.auth.GateResult
 import com.qtekfun.ultimateotp.core.crypto.PasswordKdf
 import com.qtekfun.ultimateotp.core.sync.AccountState
 import com.qtekfun.ultimateotp.core.sync.EventStream
@@ -20,6 +22,7 @@ import com.qtekfun.ultimateotp.core.vault.VaultRepository
 import com.qtekfun.ultimateotp.core.vault.VaultState
 import com.qtekfun.ultimateotp.di.AppScope
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,6 +57,7 @@ class SyncController
         @ApplicationContext private val context: Context,
         private val vault: VaultRepository,
         @AppScope private val scope: CoroutineScope,
+        private val gate: AuthGate,
     ) : DefaultLifecycleObserver {
         val http: OkHttpClient = OkHttpClient.Builder().callTimeout(CALL_TIMEOUT_S, TimeUnit.SECONDS).build()
         private val apis = mutableMapOf<String, UotpApi>()
@@ -104,7 +108,14 @@ class SyncController
 
         /** Re-reads the account, starts or stops the live stream. */
         suspend fun refresh() {
-            val account = if (vault.state.value == VaultState.UNLOCKED) vault.account() else null
+            val account =
+                try {
+                    if (vault.state.value == VaultState.UNLOCKED) vault.account() else null
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null // an unreadable account row must not end the collector that calls this
+                }
             _status.value = _status.value.copy(account = account)
             if (account != null && foreground) {
                 events.start(scope)
@@ -120,9 +131,18 @@ class SyncController
                 _status.value = _status.value.copy(running = true)
                 val result =
                     try {
-                        engine.sync().also { _status.value = _status.value.copy(offline = false) }
+                        // Adopting a key rotated by another device writes a Keystore secret: through the gate.
+                        (gate.run { engine.sync() } as? GateResult.Done)
+                            ?.value
+                            ?.also { _status.value = _status.value.copy(offline = false) }
                     } catch (_: IOException) {
                         _status.value = _status.value.copy(offline = true)
+                        null
+                    } catch (e: CancellationException) {
+                        _status.value = _status.value.copy(running = false)
+                        throw e
+                    } catch (_: Exception) {
+                        // A rejected head, a bad blob, a full disk: sync stops, the app does not.
                         null
                     }
                 _status.value = _status.value.copy(running = false, last = result ?: _status.value.last, account = vault.account())
