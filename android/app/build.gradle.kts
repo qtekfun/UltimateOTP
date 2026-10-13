@@ -126,7 +126,8 @@ val verifyMinifiedBuild =
         group = "verification"
         description = "Checks R8's mapping for classes that must keep their name or must survive."
         val mapping = layout.buildDirectory.file("outputs/mapping/smoke/mapping.txt")
-        dependsOn("minifySmokeWithR8")
+        // R8 writes mapping.prt; the Compose mapping merge turns it into the mapping.txt read here.
+        dependsOn("minifySmokeWithR8", "mergeSmokeComposeMapping")
         inputs.file(mapping)
         doLast {
             val renamedTo = mutableMapOf<String, String>()
