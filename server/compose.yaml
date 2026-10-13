@@ -1,0 +1,73 @@
+# SPDX-FileCopyrightText: 2026 UltimateOTP contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Example deployment (Docker Compose, one host). Next to it, a `.env` file:
+#   UOTP_VERSION=0.1.0              image tag
+#   UOTP_BIND=127.0.0.1:8047        keep it local; public access only through the reverse proxy
+#   UOTP_TRUSTED_PROXIES=...        the proxy addresses whose X-Forwarded-For is believed
+#   UOTP_LAN_NETWORKS=...           your LAN /24 (and tailnet): where enrollment is allowed
+# then:
+#   docker compose up -d
+#   docker compose exec api ultimateotp account-create        # first device's enrollment token
+# Behind Traefik (Cloudflare Tunnel), see docs/deploy.md for the override with the dedicated
+# proxy network, per-route rate limits and the LAN-only enrollment routes.
+# Migrations run first (`migrate`), then the api. Exactly ONE api process: the live-sync
+# broker is in memory (docs/sync.md); never scale this service.
+
+x-hardening: &hardening
+  image: ${UOTP_IMAGE:-ultimateotp-server}:${UOTP_VERSION:?set UOTP_VERSION}
+  build:
+    context: ..
+    dockerfile: server/Dockerfile
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+  pids_limit: 128
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: "3"}
+
+services:
+  migrate:
+    <<: *hardening
+    command: ["migrate"]
+    restart: "no"
+    volumes: [data:/data]
+
+  api:
+    <<: *hardening
+    command: ["api"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      UOTP_LOG_LEVEL: ${UOTP_LOG_LEVEL:-INFO}
+      # Empty: no proxy is trusted; a request carrying forwarding headers never counts as LAN.
+      UOTP_TRUSTED_PROXIES: ${UOTP_TRUSTED_PROXIES:-}
+      # Enrollment (new devices, password/recovery wraps) is LAN-only unless set to `anywhere`
+      # (docs/decisions.md item 4). Narrow the LAN to your own ranges; never a Docker range.
+      UOTP_ENROLLMENT_SCOPE: ${UOTP_ENROLLMENT_SCOPE:-lan}
+      UOTP_LAN_NETWORKS: ${UOTP_LAN_NETWORKS:-127.0.0.0/8,::1/128,192.168.0.0/16,fd00::/8}
+      UOTP_DENIED_NETWORKS: ${UOTP_DENIED_NETWORKS:-}
+      # Who may scrape /metrics (never routed by the proxy).
+      UOTP_METRICS_NETWORKS: ${UOTP_METRICS_NETWORKS:-127.0.0.0/8,::1/128}
+      # Open connections, live-sync streams included (3 per device at most).
+      UOTP_LIMIT_CONCURRENCY: ${UOTP_LIMIT_CONCURRENCY:-256}
+    # Small: tens of MiB idle; request bodies are capped at 4 MiB (UOTP_MAX_BODY_BYTES).
+    mem_limit: 256m
+    cpus: 1.0
+    ulimits:
+      nofile: {soft: 4096, hard: 4096}
+    ports: ["${UOTP_BIND:-127.0.0.1:8047}:8047"]
+    volumes: [data:/data]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8047/readyz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  data:
