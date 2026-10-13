@@ -3,30 +3,23 @@
 
 package com.qtekfun.ultimateotp.ui.sync
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MarkEmailRead
 import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -41,9 +34,13 @@ import com.qtekfun.ultimateotp.core.sync.api.ApiException
 import com.qtekfun.ultimateotp.core.sync.login.AccountProblem
 import com.qtekfun.ultimateotp.core.sync.login.EmailLogin
 import com.qtekfun.ultimateotp.sync.SyncController
+import com.qtekfun.ultimateotp.ui.components.Callout
+import com.qtekfun.ultimateotp.ui.components.CalloutKind
+import com.qtekfun.ultimateotp.ui.components.FlowScaffold
 import com.qtekfun.ultimateotp.ui.components.PasswordField
+import com.qtekfun.ultimateotp.ui.components.StepHeader
+import com.qtekfun.ultimateotp.ui.components.rememberRetainedText
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -147,9 +144,16 @@ class LoginViewModel
     }
 
 private const val CODE_LENGTH = 6
-private const val SECOND_MS = 1_000L
+private const val STEPS = 3
 
-@OptIn(ExperimentalMaterial3Api::class)
+private fun position(step: LoginStep): Int? =
+    when (step) {
+        is LoginStep.Email, is LoginStep.Failed -> 1
+        is LoginStep.Code -> 2
+        is LoginStep.Password, LoginStep.Done -> STEPS
+        LoginStep.Working -> null
+    }
+
 @Composable
 fun LoginScreen(
     defaultServer: String,
@@ -158,61 +162,74 @@ fun LoginScreen(
     model: LoginViewModel = hiltViewModel(),
 ) {
     val step by model.step.collectAsState()
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.login_title)) },
-                navigationIcon = {
-                    IconButton(
-                        onClick = onBack,
-                    ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
-                },
-            )
-        },
-    ) { padding ->
-        Column(Modifier.padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            when (val s = step) {
-                is LoginStep.Email -> {
-                    if (s.wrongPassword) Text(stringResource(R.string.wrong_password_again), color = MaterialTheme.colorScheme.error)
-                    EmailStep(defaultServer, model::sendCode)
-                }
+    LoginContent(
+        step = step,
+        defaultServer = defaultServer,
+        onBack = onBack,
+        onSendCode = model::sendCode,
+        onVerify = { s, code -> model.verify(s, code) },
+        onResend = { model.resend(it) },
+        onPassword = { s, password -> model.complete(s, password, label) },
+        onRestart = model::restart,
+    )
+}
 
-                is LoginStep.Code -> {
-                    CodeStep(s, onVerify = { model.verify(s, it) }, onResend = { model.resend(s) })
-                }
+/** The log-in screen, stateless: email, emailed code, password, with a progress bar. */
+@Composable
+fun LoginContent(
+    step: LoginStep,
+    defaultServer: String,
+    onBack: () -> Unit,
+    onSendCode: (String, String) -> Unit,
+    onVerify: (LoginStep.Code, String) -> Unit,
+    onResend: (LoginStep.Code) -> Unit,
+    onPassword: (LoginStep.Password, String) -> Unit,
+    onRestart: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var shown by rememberSaveable { androidx.compose.runtime.mutableIntStateOf(1) }
+    position(step)?.let { shown = it }
+    FlowScaffold(title = stringResource(R.string.login_title), onBack = onBack, modifier = modifier, step = shown, steps = STEPS) {
+        when (step) {
+            is LoginStep.Email -> {
+                if (step.wrongPassword) Callout(stringResource(R.string.wrong_password_again), kind = CalloutKind.ERROR)
+                EmailStep(defaultServer, onSendCode)
+            }
 
-                is LoginStep.Password -> {
-                    PasswordStep(s) { model.complete(s, it, label) }
-                }
+            is LoginStep.Code -> {
+                CodeStep(step, onVerify = { onVerify(step, it) }, onResend = { onResend(step) })
+            }
 
-                LoginStep.Working -> {
-                    Text(stringResource(R.string.working))
-                }
+            is LoginStep.Password -> {
+                PasswordStep(step) { onPassword(step, it) }
+            }
 
-                LoginStep.Done -> {
-                    Text(stringResource(R.string.login_done))
-                    Button(onClick = onBack) { Text(stringResource(R.string.ok)) }
-                }
+            LoginStep.Working -> {
+                Working(deriving = false)
+            }
 
-                is LoginStep.Failed -> {
-                    Text(
-                        when {
-                            s.unavailable -> {
-                                stringResource(R.string.login_unavailable)
-                            }
+            LoginStep.Done -> {
+                Done(stringResource(R.string.login_done_title), stringResource(R.string.login_done), onBack)
+            }
 
-                            s.problem is AccountProblem.AccountLocked || s.problem is AccountProblem.RateLimited -> {
-                                accountProblemText(s.problem)
-                            }
+            is LoginStep.Failed -> {
+                Callout(
+                    when {
+                        step.unavailable -> {
+                            stringResource(R.string.login_unavailable)
+                        }
 
-                            else -> {
-                                stringResource(R.string.login_failed)
-                            }
-                        },
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    Button(onClick = model::restart) { Text(stringResource(R.string.try_again)) }
-                }
+                        step.problem is AccountProblem.AccountLocked || step.problem is AccountProblem.RateLimited -> {
+                            accountProblemText(step.problem)
+                        }
+
+                        else -> {
+                            stringResource(R.string.login_failed)
+                        }
+                    },
+                    kind = CalloutKind.ERROR,
+                )
+                Button(onClick = onRestart, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.try_again)) }
             }
         }
     }
@@ -223,17 +240,32 @@ private fun EmailStep(
     defaultServer: String,
     onSend: (String, String) -> Unit,
 ) {
-    var server by remember { mutableStateOf(defaultServer) }
-    var email by remember { mutableStateOf("") }
-    OutlinedTextField(server, { server = it }, label = { Text(stringResource(R.string.server_url)) }, modifier = Modifier.fillMaxWidth())
+    var server by rememberSaveable { mutableStateOf(defaultServer) }
+    var email by rememberSaveable { mutableStateOf("") }
+    StepHeader(Icons.Filled.Email, stringResource(R.string.login_email_title), stringResource(R.string.login_intro))
+    OutlinedTextField(
+        server,
+        { server = it },
+        label = { Text(stringResource(R.string.server_url)) },
+        singleLine = true,
+        shape = MaterialTheme.shapes.medium,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        modifier = Modifier.fillMaxWidth(),
+    )
     OutlinedTextField(
         email,
         { email = it },
         label = { Text(stringResource(R.string.email)) },
+        singleLine = true,
+        shape = MaterialTheme.shapes.medium,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
         modifier = Modifier.fillMaxWidth(),
     )
-    Button(enabled = server.isNotBlank() && '@' in email, onClick = { onSend(server, email) }) { Text(stringResource(R.string.send_code)) }
+    Button(
+        enabled = server.isNotBlank() && '@' in email,
+        onClick = { onSend(server, email) },
+        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+    ) { Text(stringResource(R.string.send_code)) }
 }
 
 @Composable
@@ -242,29 +274,13 @@ private fun CodeStep(
     onVerify: (String) -> Unit,
     onResend: () -> Unit,
 ) {
-    var code by remember { mutableStateOf("") }
-    var now by remember { mutableLongStateOf(System.currentTimeMillis() / SECOND_MS) }
-    LaunchedEffect(step.resendAt) {
-        while (now < step.resendAt) {
-            delay(SECOND_MS)
-            now = System.currentTimeMillis() / SECOND_MS
-        }
+    var code by rememberSaveable(step.wrongCode) { mutableStateOf("") }
+    StepHeader(Icons.Filled.MarkEmailRead, stringResource(R.string.code_step_title), stringResource(R.string.code_sent, step.ticket.email))
+    CodeField(code, { code = it }, step.wrongCode)
+    Button(enabled = code.length == CODE_LENGTH, onClick = { onVerify(code) }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+        Text(stringResource(R.string.verify))
     }
-    Text(stringResource(R.string.code_sent, step.ticket.email))
-    OutlinedTextField(
-        code,
-        { code = it.filter(Char::isDigit).take(CODE_LENGTH) },
-        label = { Text(stringResource(R.string.email_code)) },
-        isError = step.wrongCode,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-        modifier = Modifier.fillMaxWidth(),
-    )
-    if (step.wrongCode) Text(stringResource(R.string.wrong_code), color = MaterialTheme.colorScheme.error)
-    Button(enabled = code.length == CODE_LENGTH, onClick = { onVerify(code) }) { Text(stringResource(R.string.verify)) }
-    val wait = step.resendAt - now
-    TextButton(enabled = wait <= 0, onClick = onResend) {
-        Text(if (wait > 0) stringResource(R.string.resend_in, wait) else stringResource(R.string.resend))
-    }
+    ResendButton(step.resendAt, onResend)
 }
 
 @Composable
@@ -272,7 +288,8 @@ private fun PasswordStep(
     step: LoginStep.Password,
     onPassword: (String) -> Unit,
 ) {
-    var password by remember { mutableStateOf("") }
+    var password by rememberRetainedText("login-password")
+    StepHeader(Icons.Filled.Lock, stringResource(R.string.login_password_title), stringResource(R.string.deriving_hint))
     PasswordField(
         value = password,
         onValueChange = { password = it },
@@ -280,7 +297,14 @@ private fun PasswordStep(
         isError = step.wrongPassword,
         modifier = Modifier.fillMaxWidth(),
     )
-    if (step.wrongPassword) Text(stringResource(R.string.wrong_password), color = MaterialTheme.colorScheme.error)
-    Text(stringResource(R.string.deriving_hint))
-    Button(enabled = password.isNotEmpty(), onClick = { onPassword(password) }) { Text(stringResource(R.string.sign_in)) }
+    if (step.wrongPassword) {
+        Text(
+            stringResource(R.string.wrong_password),
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+    Button(enabled = password.isNotEmpty(), onClick = { onPassword(password) }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+        Text(stringResource(R.string.sign_in))
+    }
 }
