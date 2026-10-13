@@ -48,6 +48,10 @@ Email = Annotated[
 ]
 EmailCode = Annotated[str, StringConstraints(pattern=r"^[0-9]{6}$")]
 AppVersion = Annotated[str, StringConstraints(pattern=r"^[\x21-\x7e]{1,64}$")]
+Lang = Annotated[
+    str, StringConstraints(pattern=r"^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})*$", max_length=35)
+]
+SrpSessionId = Annotated[str, StringConstraints(pattern=r"^srp_[A-Za-z0-9_-]{22}$")]
 
 MAX_CHANGES = 2000
 
@@ -90,6 +94,7 @@ class NewDevice(_Body):
 
 class EmailCodeRequest(_Body):
     email: Email
+    lang: Lang | None = None
 
 
 class SrpAttributesRequest(_Body):
@@ -113,6 +118,7 @@ class SignupRequest(_Body):
     email_code: EmailCode | None = None
     device: NewDevice
     keys: KeyBundle
+    lang: Lang | None = None
 
 
 class PutKeysRequest(_Body):
@@ -169,3 +175,33 @@ class RotateRequest(_Body):
     deletes: list[ItemId] = Field(default_factory=list, max_length=MAX_CHANGES)
     keys: KeyBundle
     device_keys: list[DeviceKeyInput] = Field(min_length=1, max_length=MAX_CHANGES)
+
+
+class ReauthSrp(_Body):
+    session_id: SrpSessionId
+    srp_m1: SrpProof
+
+
+class Reauth(_Body):
+    """Exactly one proof: the emailed code or the SRP proof of a re-authentication handshake."""
+
+    email_code: EmailCode | None = None
+    srp: ReauthSrp | None = None
+
+
+class ReauthSrpRequest(_Body):
+    srp_a: SrpPublic
+
+
+class DeleteAccountRequest(_Body):
+    reauth: Reauth
+
+
+class ChangeEmailRequest(_Body):
+    new_email: Email
+    lang: Lang | None = None
+    reauth: Reauth
+
+
+class ConfirmEmailRequest(_Body):
+    code: EmailCode

@@ -8,11 +8,11 @@ from collections.abc import AsyncIterator, Callable
 from http import HTTPStatus
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from ultimateotp import API_VERSION, db
+from ultimateotp import API_VERSION, db, i18n
 from ultimateotp.auth import (
     auth_failed,
     bearer,
@@ -29,11 +29,15 @@ from ultimateotp.events import Event
 from ultimateotp.forwarded import from_networks
 from ultimateotp.models import (
     ApproveRequest,
+    ChangeEmailRequest,
     CommitRequest,
+    ConfirmEmailRequest,
+    DeleteAccountRequest,
     EmailCodeRequest,
     EnrollRequest,
     JoinRequest,
     PutKeysRequest,
+    ReauthSrpRequest,
     RotateRequest,
     SignupRequest,
     SrpAttributesRequest,
@@ -42,6 +46,8 @@ from ultimateotp.models import (
 )
 from ultimateotp.service import DeviceAuth, Service, SignedRequest
 from ultimateotp.settings import Settings
+
+ITEM_ID_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 
 router = APIRouter(prefix="/otp/v1")
 
@@ -63,7 +69,13 @@ def _pending(request: Request, call: Callable[[], dict[str, Any]]) -> dict[str, 
 
 @router.get("/server-info")
 def server_info(request: Request) -> dict[str, Any]:
-    return {"api_version": API_VERSION, "server_time": service_of(request).clock.now()}
+    settings: Settings = request.app.state.settings
+    return {
+        "api_version": API_VERSION,
+        "server_time": service_of(request).clock.now(),
+        "history_retention_days": settings.history_retention_days,
+        "languages": list(i18n.SUPPORTED),
+    }
 
 
 # ---------------------------------------------------------------- enrollment
@@ -89,7 +101,7 @@ def request_email_code(request: Request, body: EmailCodeRequest) -> dict[str, An
     """Always 202: whether the address has an account is never revealed."""
     rate_limit(request, "email_ip", client_key(request))
     rate_limit(request, "email_address", body.email)
-    service_of(request).login.request_code(body.email, client_key(request))
+    service_of(request).login.request_code(body.email, body.lang)
     return {"status": "accepted"}
 
 
@@ -101,7 +113,7 @@ def srp_attributes(request: Request, body: SrpAttributesRequest) -> dict[str, An
 @router.post("/srp/session", dependencies=[LoginGate])
 def srp_session(request: Request, body: SrpSessionRequest) -> dict[str, Any]:
     service = service_of(request)
-    return _pending(request, lambda: service.login.start(body, client_key(request)))
+    return _pending(request, lambda: service.login.start(body))
 
 
 @router.post("/srp/verify", status_code=201, dependencies=[LoginGate])
@@ -150,6 +162,62 @@ def list_devices(request: Request, auth: Auth) -> dict[str, Any]:
 @router.post("/devices/{device_id}/revoke")
 def revoke_device(request: Request, auth: Auth, device_id: str) -> dict[str, Any]:
     return service_of(request).revoke_device(device_id, auth)
+
+
+@router.post("/devices/revoke-others")
+def revoke_others(request: Request, auth: Auth) -> dict[str, Any]:
+    rate_limit(request, "account", auth.account_id)
+    return service_of(request).accounts.revoke_others(auth)
+
+
+# ---------------------------------------------------------------- account management (1.2.0)
+
+
+@router.post("/account/reauth/email-code", status_code=202)
+def reauth_email_code(request: Request, auth: Auth) -> dict[str, Any]:
+    service = service_of(request)
+    rate_limit(request, "account", auth.account_id)
+    rate_limit(request, "email_ip", client_key(request))
+    rate_limit(request, "email_address", service.account_email(auth.account_id) or auth.account_id)
+    service.accounts.request_reauth_code(auth)
+    return {"status": "accepted"}
+
+
+@router.post("/account/reauth/srp")
+def reauth_srp(request: Request, auth: Auth, body: ReauthSrpRequest) -> dict[str, Any]:
+    rate_limit(request, "account", auth.account_id)
+    rate_limit(request, "srp", client_key(request))
+    return service_of(request).accounts.reauth_srp_start(auth, body)
+
+
+@router.post("/account/delete")
+def delete_account(request: Request, auth: Auth, body: DeleteAccountRequest) -> dict[str, Any]:
+    rate_limit(request, "account", auth.account_id)
+    return service_of(request).accounts.delete_account(auth, body)
+
+
+@router.post("/account/email/change", status_code=202)
+def change_email(request: Request, auth: Auth, body: ChangeEmailRequest) -> dict[str, Any]:
+    rate_limit(request, "account", auth.account_id)
+    rate_limit(request, "email_ip", client_key(request))
+    rate_limit(request, "email_address", body.new_email)
+    return service_of(request).accounts.change_email(auth, body)
+
+
+@router.post("/account/email/confirm")
+def confirm_email(request: Request, auth: Auth, body: ConfirmEmailRequest) -> dict[str, Any]:
+    rate_limit(request, "account", auth.account_id)
+    return service_of(request).accounts.confirm_email(auth, body)
+
+
+@router.get("/account/export")
+def export_account(request: Request, auth: Auth) -> JSONResponse:
+    rate_limit(request, "export", auth.device_id)
+    document = service_of(request).accounts.export(auth)
+    return JSONResponse(
+        document,
+        headers={"Content-Disposition": 'attachment; filename="ultimateotp-export.json"'},
+    )
 
 
 # ---------------------------------------------------------------- pairing
@@ -204,6 +272,34 @@ def get_vault(
     return service_of(request).get_vault(auth, since)
 
 
+@router.get("/vault/history")
+def vault_history(
+    request: Request,
+    auth: Auth,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    before: Annotated[int | None, Query(ge=1)] = None,
+) -> dict[str, Any]:
+    rate_limit(request, "history", auth.device_id)
+    return service_of(request).vault_history(auth, limit, before)
+
+
+@router.get("/vault/history/{version}")
+def vault_version(
+    request: Request,
+    auth: Auth,
+    version: Annotated[int, Path(ge=1)],
+    item_id: Annotated[str | None, Query(pattern=ITEM_ID_PATTERN)] = None,
+) -> dict[str, Any]:
+    rate_limit(request, "history", auth.device_id)
+    return service_of(request).vault_version(auth, version, item_id)
+
+
+@router.get("/vault/trash")
+def vault_trash(request: Request, auth: Auth) -> dict[str, Any]:
+    rate_limit(request, "history", auth.device_id)
+    return service_of(request).vault_trash(auth)
+
+
 @router.post("/vault/commit")
 def commit(request: Request, auth: Auth, body: CommitRequest) -> dict[str, Any]:
     rate_limit(request, "write", auth.device_id)
@@ -226,13 +322,20 @@ def _hello(state: dict[str, Any]) -> Event:
     )
 
 
+def _gone(state: dict[str, Any], auth: DeviceAuth) -> Event:
+    """Why the stream ends: the account was deleted, or this device was revoked."""
+    if state.get("deleted"):
+        return Event("account_deleted", {})
+    return Event("revoked", {"device_id": auth.device_id})
+
+
 async def _stream(service: Service, settings: Settings, auth: DeviceAuth) -> AsyncIterator[str]:
     sub = service.broker.subscribe(auth.account_id, auth.device_id)
     try:
         yield "retry: 5000\n\n"
         state = await run_in_threadpool(service.state, auth.account_id, auth.device_id)
         if state["revoked"]:
-            yield Event("revoked", {"device_id": auth.device_id}).encode()
+            yield _gone(state, auth).encode()
             return
         yield _hello(state).encode()
         loop = asyncio.get_running_loop()
@@ -248,7 +351,7 @@ async def _stream(service: Service, settings: Settings, auth: DeviceAuth) -> Asy
                 # Catch up with changes made outside this process (admin CLI) or dropped.
                 fresh = await run_in_threadpool(service.state, auth.account_id, auth.device_id)
                 if fresh["revoked"]:
-                    yield Event("revoked", {"device_id": auth.device_id}).encode()
+                    yield _gone(fresh, auth).encode()
                     return
                 if fresh["version"] > state["version"]:
                     yield Event(
@@ -270,7 +373,7 @@ async def _stream(service: Service, settings: Settings, auth: DeviceAuth) -> Asy
             elif event.name == "devices":
                 state = {**state, "devices_revision": event.data["devices_revision"]}
             yield event.encode()
-            if event.name == "revoked":
+            if event.name in ("revoked", "account_deleted"):
                 return
     finally:
         service.broker.unsubscribe(sub)
@@ -283,6 +386,7 @@ async def events(request: Request, auth: Auth) -> StreamingResponse:
     if service.broker.count(auth.device_id) >= settings.sse_max_streams_per_device:
         raise ApiError(429, "rate_limited", "too many open streams", retry_after=5)
     service.event("sse.open", device_id=auth.device_id)
+    service.metrics.inc("uotp_sse_connections_total")
     return StreamingResponse(
         _stream(service, settings, auth),
         media_type="text/event-stream",
