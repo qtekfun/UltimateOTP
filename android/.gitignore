@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 UltimateOTP contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+*.iml
+.gradle/
+local.properties
+.idea/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+.kotlin/
+*.jks
+*.keystore
