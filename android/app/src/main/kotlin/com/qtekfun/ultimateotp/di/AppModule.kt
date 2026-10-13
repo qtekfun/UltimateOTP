@@ -4,6 +4,7 @@
 package com.qtekfun.ultimateotp.di
 
 import android.content.Context
+import android.util.Log
 import com.qtekfun.ultimateotp.core.sync.login.EmailLogin
 import com.qtekfun.ultimateotp.core.sync.login.EmailSignup
 import com.qtekfun.ultimateotp.core.sync.login.SrpEmailLogin
@@ -19,6 +20,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -72,5 +74,9 @@ object AppModule {
     @Provides
     @Singleton
     @AppScope
-    fun appScope(): CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    fun appScope(): CoroutineScope =
+        CoroutineScope(
+            SupervisorJob() + Dispatchers.Default +
+                CoroutineExceptionHandler { _, e -> Log.e("UotpApp", "background work failed: ${e.javaClass.simpleName}") },
+        )
 }

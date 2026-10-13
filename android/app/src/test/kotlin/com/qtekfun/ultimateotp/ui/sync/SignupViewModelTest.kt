@@ -3,6 +3,7 @@
 
 package com.qtekfun.ultimateotp.ui.sync
 
+import com.qtekfun.ultimateotp.auth.AuthGate
 import com.qtekfun.ultimateotp.core.otp.OtpAuthUri
 import com.qtekfun.ultimateotp.core.sync.SyncEngine
 import com.qtekfun.ultimateotp.core.sync.api.UotpApi
@@ -40,7 +41,7 @@ class SignupViewModelTest {
         Dispatchers.setMain(main)
         val apiFor = { url: String -> UotpApi(url, OkHttpClient(), nowSeconds = { server.now }) }
         val engine = SyncEngine(store, apiFor, kdfLadder = { listOf(2L to (16L shl 20)) })
-        model = SignupViewModel(EmailSignup(engine, apiFor, nowSeconds = { server.now })) { refreshed++ }
+        model = SignupViewModel(EmailSignup(engine, apiFor, nowSeconds = { server.now }), { refreshed++ }, AuthGate())
     }
 
     @AfterEach

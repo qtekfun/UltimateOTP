@@ -18,10 +18,8 @@ object Bip39 {
     private const val BYTE_MASK = 0xFF
 
     val wordlist: List<String> by lazy {
-        val stream = requireNotNull(Bip39::class.java.getResourceAsStream("bip39-english.txt")) { "missing wordlist" }
-        stream
-            .bufferedReader(Charsets.UTF_8)
-            .readLines()
+        CryptoResources
+            .readLines("bip39-english.txt")
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .also { check(it.size == WORDS) { "wordlist must have $WORDS words" } }

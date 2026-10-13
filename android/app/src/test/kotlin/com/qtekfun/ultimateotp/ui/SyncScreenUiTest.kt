@@ -13,6 +13,7 @@ import androidx.room3.Room
 import androidx.sqlite.driver.AndroidSQLiteDriver
 import androidx.test.core.app.ApplicationProvider
 import com.qtekfun.ultimateotp.R
+import com.qtekfun.ultimateotp.auth.AuthGate
 import com.qtekfun.ultimateotp.core.crypto.Sodium
 import com.qtekfun.ultimateotp.core.sync.AccountState
 import com.qtekfun.ultimateotp.core.vault.VaultRepository
@@ -54,7 +55,7 @@ class SyncScreenUiTest(
         Host(rule) {
             val model =
                 viewModel<SyncViewModel>(
-                    factory = viewModelFactory { initializer { SyncViewModel(controller, vault, AppSettings(context)) } },
+                    factory = viewModelFactory { initializer { SyncViewModel(controller, vault, AppSettings(context), AuthGate()) } },
                 )
             SyncScreen(
                 initialLink = "",
@@ -72,7 +73,7 @@ class SyncScreenUiTest(
         val db = Room.inMemoryDatabaseBuilder<VaultDatabase>(context).setDriver(AndroidSQLiteDriver()).build()
         vault = VaultRepository(db.dao(), InMemorySecretStore())
         runBlocking { vault.create() }
-        controller = SyncController(context, vault, scope)
+        controller = SyncController(context, vault, scope, AuthGate())
     }
 
     @After

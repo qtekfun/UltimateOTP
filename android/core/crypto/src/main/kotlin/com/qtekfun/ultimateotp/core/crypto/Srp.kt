@@ -49,7 +49,7 @@ class SrpGroup(
 
         /** RFC 5054 §A.5, g = 5, SHA-256: the UltimateOTP (and Ente) parameters. */
         val RFC5054_4096: SrpGroup by lazy {
-            val text = requireNotNull(SrpGroup::class.java.getResourceAsStream("rfc5054-4096.hex")).bufferedReader().readText()
+            val text = CryptoResources.readText("rfc5054-4096.hex")
             SrpGroup(BigInteger(text.filter { it.isLetterOrDigit() }, 16), BigInteger.valueOf(G4096), "SHA-256")
         }
     }
