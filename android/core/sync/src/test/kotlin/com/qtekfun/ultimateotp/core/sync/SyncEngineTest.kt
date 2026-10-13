@@ -275,7 +275,7 @@ class SyncEngineTest {
             val api = UotpApi(server.url, http, nowSeconds = { server.now })
             val e = assertThrows<ApiException> { runBlocking { api.recoveryKeys("uoe_unknown") } }
             assertEquals("invalid_token", e.code)
-            assertEquals("1.0.0", api.serverInfo().apiVersion)
+            assertEquals("1.2.0", api.serverInfo().apiVersion)
         }
 
     private fun pairTrusted(): Pair<Device, Device> =
