@@ -83,3 +83,13 @@ internal fun sha256(data: ByteArray): ByteArray = MessageDigest.getInstance("SHA
 
 /** `b64u(SHA-256(data))`, the hash encoding of the contract's signed statements. */
 fun sha256B64u(data: ByteArray): String = B64u.encode(sha256(data))
+
+/** Big-endian integer fields for callers outside this module (the vault's stored key record). */
+object ByteFields {
+    fun u32(v: Long): ByteArray = ByteWriter().u32(v).toByteArray()
+
+    fun readU32(
+        data: ByteArray,
+        offset: Int,
+    ): Long = ByteReader(data.copyOfRange(offset, offset + Int.SIZE_BYTES)).u32()
+}

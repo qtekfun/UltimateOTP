@@ -23,5 +23,5 @@ rootProject.name = "UltimateOTP"
 // include(":app")
 include(":core:otp")
 include(":core:crypto")
-// include(":core:vault")
-// include(":core:sync")
+include(":core:vault")
+include(":core:sync")
