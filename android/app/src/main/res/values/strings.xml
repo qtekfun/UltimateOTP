@@ -127,4 +127,11 @@
     <string name="upload_local">Upload my local copy</string>
     <string name="upload_local_body">Use this only after the server was restored from an old backup: every code on this device is sent to the server again.</string>
     <string name="wrong_password_again">Wrong password. Codes work once: request a new one and try again.</string>
+    <string name="bootstrap_email_code">Email code from account creation (if asked)</string>
+    <string name="done_password">Password changed. Use the new one to sign in on other devices.</string>
+    <string name="session_meta">App %1$s · last seen %2$s · %3$s</string>
+    <string name="change_password">Change master password</string>
+    <string name="current_password">Current password</string>
+    <string name="or_recovery_words">…or the 24 recovery words</string>
+    <string name="new_password">New password (at least 8 characters)</string>
 </resources>

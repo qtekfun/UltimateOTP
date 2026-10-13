@@ -43,7 +43,7 @@ class VaultRepositoryTest {
     private val uri = "otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example"
 
     @Test
-    fun `create, add, lock, unlock with authentication`() =
+    fun `create, add, lock, unlock with authentication`(): Unit =
         runBlocking {
             assertEquals(VaultState.NONE, vault.state.value)
             vault.create()
@@ -72,7 +72,7 @@ class VaultRepositoryTest {
         }
 
     @Test
-    fun `edit, HOTP counter and delete`() =
+    fun `edit, HOTP counter and delete`(): Unit =
         runBlocking {
             vault.create()
             val item = vault.add(OtpAuthUri.parse("otpauth://hotp/Bank:bob?secret=JBSWY3DPEHPK3PXP&counter=5"))
@@ -87,7 +87,7 @@ class VaultRepositoryTest {
         }
 
     @Test
-    fun `encrypted export round-trips and import skips duplicates`() =
+    fun `encrypted export round-trips and import skips duplicates`(): Unit =
         runBlocking {
             vault.create()
             vault.add(OtpAuthUri.parse(uri))

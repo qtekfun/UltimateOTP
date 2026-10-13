@@ -15,6 +15,7 @@ import com.qtekfun.ultimateotp.core.sync.PairLink
 import com.qtekfun.ultimateotp.core.sync.SyncResult
 import com.qtekfun.ultimateotp.core.sync.api.ApiException
 import com.qtekfun.ultimateotp.core.sync.api.PairingDevice
+import com.qtekfun.ultimateotp.core.sync.api.SessionInfo
 import com.qtekfun.ultimateotp.core.vault.VaultRepository
 import com.qtekfun.ultimateotp.sync.SyncController
 import com.qtekfun.ultimateotp.sync.SyncStatus
@@ -75,7 +76,7 @@ sealed interface SyncStep {
 
     enum class Reason { NETWORK, WRONG_SECRET, LAN_ONLY, REJECTED_STATE, REFUSED, SERVER, LOGIN_UNAVAILABLE }
 
-    enum class DoneKind { ENROLLED, PAIRED, PAIRING_DECLINED, ROTATED, UPLOADED }
+    enum class DoneKind { ENROLLED, PAIRED, PAIRING_DECLINED, ROTATED, UPLOADED, PASSWORD_CHANGED }
 }
 
 @HiltViewModel
@@ -90,6 +91,8 @@ class SyncViewModel
         val settings: StateFlow<Settings> = appSettings.settings.stateIn(viewModelScope, SharingStarted.Eagerly, Settings())
         private val _step = MutableStateFlow<SyncStep>(SyncStep.Idle)
         val step: StateFlow<SyncStep> = _step.asStateFlow()
+        private val _sessions = MutableStateFlow<Map<String, SessionInfo>>(emptyMap())
+        val sessions: StateFlow<Map<String, SessionInfo>> = _sessions.asStateFlow()
         private val _devices = MutableStateFlow<List<DeviceView>>(emptyList())
         val devices: StateFlow<List<DeviceView>> = _devices.asStateFlow()
         private var poll: Job? = null
@@ -178,9 +181,10 @@ class SyncViewModel
             token: String,
             password: String?,
             label: String,
+            emailCode: String,
         ) = run(SyncStep.Busy.Kind.DERIVING_KEY) {
             val url = enrollmentUrl(server) ?: return@run SyncStep.Failed(SyncStep.Reason.LAN_ONLY)
-            val words = engine.bootstrap(url, token.trim(), password, label)
+            val words = engine.bootstrap(url, token.trim(), password, label, emailCode.trim().ifBlank { null })
             useServer(server)
             controller.syncNow()
             SyncStep.RecoveryWords(words)
@@ -284,6 +288,7 @@ class SyncViewModel
         fun loadDevices() =
             viewModelScope.launch {
                 _devices.value = runCatching { engine.devices() }.getOrDefault(_devices.value)
+                _sessions.value = runCatching { engine.sessions().associateBy { it.deviceId } }.getOrDefault(_sessions.value)
             }
 
         fun trust(deviceId: String) =
@@ -317,6 +322,16 @@ class SyncViewModel
                     else -> SyncStep.Failed(SyncStep.Reason.REJECTED_STATE)
                 }
             }
+
+        /** New master password; proof is the current password or, after recovery, the 24 words. */
+        fun changePassword(
+            newPassword: String,
+            currentPassword: String?,
+            recoveryWords: String?,
+        ) = run(SyncStep.Busy.Kind.DERIVING_KEY) {
+            engine.changePassword(newPassword, currentPassword?.ifBlank { null }, recoveryWords?.ifBlank { null })
+            SyncStep.Done(SyncStep.DoneKind.PASSWORD_CHANGED)
+        }
 
         private companion object {
             const val POLL_MS = 2_000L

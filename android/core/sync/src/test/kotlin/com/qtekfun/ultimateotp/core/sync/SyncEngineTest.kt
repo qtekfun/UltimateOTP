@@ -52,7 +52,7 @@ class SyncEngineTest {
         }
 
     @Test
-    fun `bootstrap uploads the offline vault, password enrollment brings it to a new device`() =
+    fun `bootstrap uploads the offline vault, password enrollment brings it to a new device`(): Unit =
         runBlocking {
             val a = bootstrapped()
             assertEquals(1L, server.state.head.version)
@@ -71,7 +71,7 @@ class SyncEngineTest {
         }
 
     @Test
-    fun `email code and SRP login from anywhere, like Ente`() =
+    fun `email code and SRP login from anywhere, like Ente`(): Unit =
         runBlocking {
             val a = bootstrapped()
             val b = device()
@@ -94,18 +94,37 @@ class SyncEngineTest {
         }
 
     @Test
-    fun `wrong password and recovery key enrollment`() =
+    fun `recovery words, then a new password that works for SRP login`(): Unit =
+        runBlocking {
+            val a = device()
+            a.store.add(otp("alice"))
+            val words = a.engine.bootstrap(server.url, server.issueToken(), "forgotten", "A")
+            a.engine.sync()
+            val b = device()
+            b.engine.enrollWithRecoveryKey(server.url, server.issueToken(), words.joinToString(" "), "B")
+            b.engine.changePassword("brand new pass", currentPassword = null, recoveryWords = words.joinToString(" "))
+            b.engine.sync()
+            val c = device()
+            val login = SrpEmailLogin(c.engine, { UotpApi(it, http, nowSeconds = { server.now }) })
+            val (ticket, _) = login.requestCode(server.url, server.email)
+            login.verifyCode(ticket, server.lastEmailCode!!)
+            login.complete(ticket, "brand new pass", "C")
+            c.engine.sync()
+            assertEquals(listOf("alice"), c.store.items().map { it.otp.label })
+        }
+
+    @Test
+    fun `wrong password and recovery key enrollment`(): Unit =
         runBlocking {
             bootstrapped()
             val b = device()
             assertThrows<com.qtekfun.ultimateotp.core.crypto.CryptoException.AuthenticationFailed> {
                 b.engine.enrollWithPassword(server.url, server.issueToken(), "wrong", "B")
             }
-            Unit
         }
 
     @Test
-    fun `pairing with matching words, then live edits flow both ways`() =
+    fun `pairing with matching words, then live edits flow both ways`(): Unit =
         runBlocking {
             val a = bootstrapped()
             val b = device()
@@ -138,7 +157,7 @@ class SyncEngineTest {
         }
 
     @Test
-    fun `concurrent edits get a 409, merge and keep a conflict copy`() =
+    fun `concurrent edits get a 409, merge and keep a conflict copy`(): Unit =
         runBlocking {
             var t = 1_000L
             val a = bootstrapped()
@@ -172,7 +191,7 @@ class SyncEngineTest {
         }
 
     @Test
-    fun `a restored old server state is refused as a rollback, then re-seeded on request`() =
+    fun `a restored old server state is refused as a rollback, then re-seeded on request`(): Unit =
         runBlocking {
             val a = bootstrapped()
             val old = server.state
@@ -191,7 +210,7 @@ class SyncEngineTest {
         }
 
     @Test
-    fun `a head whose manifest does not match the items is refused`() =
+    fun `a head whose manifest does not match the items is refused`(): Unit =
         runBlocking {
             val a = bootstrapped()
             val b = device()
@@ -205,7 +224,7 @@ class SyncEngineTest {
         }
 
     @Test
-    fun `clock skew is corrected from stale_request`() =
+    fun `clock skew is corrected from stale_request`(): Unit =
         runBlocking {
             val a = bootstrapped()
             server.now += 3_600
@@ -214,7 +233,7 @@ class SyncEngineTest {
         }
 
     @Test
-    fun `revoked device leaves the account, rotation keeps the others`() =
+    fun `revoked device leaves the account, rotation keeps the others`(): Unit =
         runBlocking {
             val a = bootstrapped()
             val b = device()
@@ -250,7 +269,7 @@ class SyncEngineTest {
     }
 
     @Test
-    fun `api errors carry the problem code`() =
+    fun `api errors carry the problem code`(): Unit =
         runBlocking {
             val api = UotpApi(server.url, http, nowSeconds = { server.now })
             val e = assertThrows<ApiException> { runBlocking { api.recoveryKeys("uoe_unknown") } }
