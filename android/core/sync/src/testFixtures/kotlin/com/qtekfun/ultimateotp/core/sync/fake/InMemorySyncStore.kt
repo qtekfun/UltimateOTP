@@ -37,11 +37,22 @@ class InMemorySyncStore(
         if (account != null) this.account = account
     }
 
+    /**
+     * When set, secrets cannot be written, like a Keystore key whose authentication lapsed or
+     * that was invalidated: [ensureWritable], [saveDeviceKeys] and [installVaultKey] throw it.
+     */
+    @Volatile var refuseSecrets: Exception? = null
+
+    override suspend fun ensureWritable() {
+        refuseSecrets?.let { throw it }
+    }
+
     override fun cipher(): VaultCipher = cipher
 
     override fun deviceKeys(): DeviceKeys = keys ?: error("no device keys")
 
     override suspend fun saveDeviceKeys(keys: DeviceKeys) {
+        ensureWritable()
         this.keys = keys
     }
 
@@ -51,6 +62,7 @@ class InMemorySyncStore(
         accountId: String,
         account: AccountState,
     ) {
+        ensureWritable()
         val next = VaultCipher(vaultKey, accountId, keyEpoch)
         rows.replaceAll { _, row ->
             if (row.dirty && row.localBlob != null) row.copy(localBlob = next.seal(cipher.open(row.id, row.localBlob))) else row
@@ -86,6 +98,13 @@ class InMemorySyncStore(
         val next = item.copy(updated = clock(), updatedBy = deviceId())
         val row = rows[item.id]
         val blob = cipher.seal(next)
+        rows[item.id] = row?.copy(localBlob = blob, localDeleted = false, dirty = true) ?: ItemRow.pending(item.id, blob)
+    }
+
+    /** Writes [item] as it is, without touching `updated`: a trash or reorder change, not an edit. */
+    fun put(item: VaultItem) {
+        val row = rows[item.id]
+        val blob = cipher.seal(item)
         rows[item.id] = row?.copy(localBlob = blob, localDeleted = false, dirty = true) ?: ItemRow.pending(item.id, blob)
     }
 

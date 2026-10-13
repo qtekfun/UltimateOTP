@@ -84,6 +84,7 @@ def _parser() -> argparse.ArgumentParser:
         help="do not require an emailed code at new-device logins (on by default)",
     )
     create.add_argument("--server-url", help="public URL, to print an enrollment link")
+    create.add_argument("--lang", choices=["en", "es"], help="language of the emails (default en)")
     check = sub.add_parser("account-email-check", help="turn the login email code on or off")
     check.add_argument("account_id")
     check.add_argument("state", choices=["on", "off"])
@@ -97,7 +98,15 @@ def _parser() -> argparse.ArgumentParser:
     revoke.add_argument("device_id")
     backup = sub.add_parser("backup", help="consistent online copy of the database")
     backup.add_argument("destination", type=Path)
-    sub.add_parser("purge", help="delete expired tokens, pairings and nonces")
+    sub.add_parser(
+        "purge", help="housekeeping: expired tokens, pairings, nonces, history, tombstones, blocks"
+    )
+    blocks = sub.add_parser("blocks", help="temporary client blocks (anonymized ids)")
+    blocks_sub = blocks.add_subparsers(dest="blocks_command", required=True)
+    blocks_sub.add_parser("list", help="active blocks, longest remaining first")
+    clear = blocks_sub.add_parser("clear", help="lift one block (or all with --all)")
+    clear.add_argument("client_id", nargs="?", help="a client id such as c_0123456789ab")
+    clear.add_argument("--all", action="store_true", help="lift every block")
     return parser
 
 
@@ -113,7 +122,7 @@ def _admin(service: Service, settings: Settings, args: argparse.Namespace) -> No
     command = args.command
     if command == "account-create":
         account_id, token, expires = service.create_account(
-            args.email.strip().lower(), email_check=not args.no_email_check
+            args.email.strip().lower(), email_check=not args.no_email_check, lang=args.lang
         )
         _print({"account_id": account_id, **_token_output(token, expires, args.server_url)})
     elif command == "token-create":
@@ -132,6 +141,35 @@ def _admin(service: Service, settings: Settings, args: argparse.Namespace) -> No
         log.info("backup written to %s", args.destination)
     elif command == "purge":
         _print(service.purge())
+    elif command == "blocks":
+        _blocks(service, args)
+
+
+def _blocks(service: Service, args: argparse.Namespace) -> None:
+    if not service.settings.block_persist:
+        sys.stderr.write(
+            "note: UOTP_BLOCK_PERSIST is off, so the api keeps blocks in memory only and this"
+            " command sees none\n"
+        )
+    if args.blocks_command == "list":
+        _print(
+            [
+                {
+                    "client_id": b.client_id,
+                    "level": b.level,
+                    "blocked_until": b.blocked_until,
+                    "remaining_s": b.remaining_s,
+                    "last_event_at": b.last_event_at,
+                    "reason": b.reason,
+                }
+                for b in service.blocker.listing()
+            ]
+        )
+        return
+    if args.all == (args.client_id is not None):
+        raise ApiError(400, "invalid_request", "give a client id, or --all")
+    cleared = service.blocker.clear(None if args.all else args.client_id)
+    _print({"cleared": cleared})
 
 
 def main(argv: Sequence[str] | None = None) -> int:

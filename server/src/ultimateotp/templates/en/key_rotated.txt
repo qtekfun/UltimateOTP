@@ -1,0 +1,5 @@
+Subject: UltimateOTP: vault key rotated
+
+The vault key was rotated to epoch $epoch; every device was re-keyed. The retained history of earlier versions was cleared.
+
+If this was not you, revoke the devices you do not recognize and change your password.

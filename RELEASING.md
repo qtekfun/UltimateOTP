@@ -42,7 +42,9 @@ Without the `UOTP_*` variables, `./gradlew assembleRelease` builds an unsigned A
    the version name. Check store texts against [docs/store-checklist.md](docs/store-checklist.md).
 4. If dependencies changed, `android/gradle/verification-metadata.xml` must be up to date
    (see [docs/reproducible-builds.md](docs/reproducible-builds.md)).
-5. Commit to `master` (`chore: release X.Y.Z`) and wait for the checks to pass.
+5. Commit to `master` (`chore: release X.Y.Z`) and wait for the CI workflow (`.github/workflows/ci.yml`) to be
+   green on that commit: the release workflow runs `./gradlew check` but not the contract test or the
+   emulator suite (docs/testing.md).
 6. Tag exactly `v<versionName>` on that commit and push the tag:
    ```sh
    git tag -a v0.1.3 -m "UltimateOTP 0.1.3" && git push origin v0.1.3

@@ -1,6 +1,6 @@
 # Live sync: Server-Sent Events
 
-Status: decided for `/otp/v1` (contract `contracts/openapi.yaml` 1.1.0, `GET /otp/v1/events`; unchanged by 1.1.0).
+Status: decided for `/otp/v1` (contract `contracts/openapi.yaml` 1.2.0, `GET /otp/v1/events`; 1.2.0 only adds the `account_deleted` event).
 Owner decision 1 (docs/decisions.md): changes on one device must reach the other online devices
 without a manual step, within seconds.
 
@@ -39,6 +39,7 @@ stream is the "push", and only while the app is in use or a foreground sync runs
 | `devices` | every stream of the account | `{"devices_revision"}` | `GET /otp/v1/devices` (or `/otp/v1/sessions`), warn on unexpected additions; also sent when a device signs in with the password (SRP) or signs up |
 | `pairing` | streams of the device that created the session | `{"pairing_id", "status"}` | `GET /otp/v1/pairings/{id}`, show SAS |
 | `revoked` | streams of the revoked device; then the stream closes | `{"device_id"}` | stop syncing, wipe server state |
+| `account_deleted` | every stream of the account; then the stream closes | `{}` | the account was deleted from another device: wipe server state |
 | `: keepalive` (comment) | every stream, every 15 s | none | none (keeps proxies and NAT from closing the connection) |
 
 3. Events are **notifications, never data**. A missed event costs nothing: on every (re)connect the
@@ -68,3 +69,27 @@ account state from the database on every tick and emits `vault`/`devices`/`revok
   database re-check on every keepalive tick already makes it correct, only slower (<= 15 s).
 - Each open stream holds one connection; uvicorn's `limit_concurrency` and Traefik's `inflightreq`
   must leave room for them (deploy notes in `docs/deploy.md`).
+
+## Trash, history and the full answer (contract 1.2.0)
+
+- **Trash.** Deleting an entry in the app sets `trashed` in the item (docs/crypto-format.md §6.1)
+  and syncs as a normal edit; restore clears it. After 30 days each device removes the entry for
+  good (a normal deletion). "Delete forever" and "Empty trash" delete at once.
+- **Server history as the second net.** `GET /vault/trash` lists entries deleted for good within
+  the retention; the app's trash screen can bring one back (`HistoryRecovery`): decrypt the blob with
+  the item version it came with, write it as a pending change under the same id, sync.
+  `GET /vault/history` and `/vault/history/{version}?item_id=` give older versions of an entry the
+  same way. A rotation clears the server's history, so these only reach back to it.
+- **`VaultChanges.full`.** When true the answer is the complete live set: a local item that is
+  not in it is gone on the server even if no tombstone arrived (compacted), so the client drops it
+  unless it has an unsent change (then the edit wins and is committed again).
+- **Account events.** `account_deleted` on the stream: the device keeps its entries as an offline
+  vault and forgets the account.
+
+## Fetching a delta after tombstone compaction
+
+`GET /otp/v1/vault?since=N` answers `full: true` (the complete live set) when `N` is `0` or older
+than a tombstone the server compacted (`UOTP_TOMBSTONE_RETENTION_DAYS`, off by default). On a full
+answer a client replaces its local set and treats any local item that is not listed as deleted.
+Past versions and the trash are not part of the stream: `GET /otp/v1/vault/history`, see
+docs/deploy.md §8.

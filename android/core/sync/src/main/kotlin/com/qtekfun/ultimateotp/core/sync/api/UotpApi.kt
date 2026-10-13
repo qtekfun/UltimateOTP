@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -246,11 +247,97 @@ class UotpApi(
     ): EnrollResponse =
         call("POST", "/otp/v1/signup", encode(SignupRequest.serializer(), request), signer, null, EnrollResponse.serializer())
 
+    // ---- contract 1.2.0 ---------------------------------------------------------------------
+
+    suspend fun vaultHistory(
+        signer: Signer,
+        limit: Int = HISTORY_PAGE,
+        before: Long? = null,
+    ): VaultHistory {
+        val query = "limit=$limit" + (before?.let { "&before=$it" } ?: "")
+        return call("GET", "/otp/v1/vault/history?$query", null, signer, null, VaultHistory.serializer())
+    }
+
+    /** The vault after commit [version]; with [itemId] only that item (the head cannot then be verified). */
+    suspend fun vaultVersion(
+        signer: Signer,
+        version: Long,
+        itemId: String? = null,
+    ): HistoricVault {
+        val query = itemId?.let { "?item_id=$it" }.orEmpty()
+        return call("GET", "/otp/v1/vault/history/$version$query", null, signer, null, HistoricVault.serializer())
+    }
+
+    suspend fun vaultTrash(signer: Signer): VaultTrash = call("GET", "/otp/v1/vault/trash", null, signer, null, VaultTrash.serializer())
+
+    suspend fun reauthEmailCode(signer: Signer): Accepted =
+        call("POST", "/otp/v1/account/reauth/email-code", null, signer, null, Accepted.serializer())
+
+    suspend fun reauthSrp(
+        signer: Signer,
+        request: ReauthSrpRequest,
+    ): ReauthSrpSession =
+        call(
+            "POST",
+            "/otp/v1/account/reauth/srp",
+            encode(ReauthSrpRequest.serializer(), request),
+            signer,
+            null,
+            ReauthSrpSession.serializer(),
+        )
+
+    suspend fun deleteAccount(
+        signer: Signer,
+        request: DeleteAccountRequest,
+    ): AccountDeleted =
+        call(
+            "POST",
+            "/otp/v1/account/delete",
+            encode(DeleteAccountRequest.serializer(), request),
+            signer,
+            null,
+            AccountDeleted.serializer(),
+        )
+
+    suspend fun requestEmailChange(
+        signer: Signer,
+        request: ChangeEmailRequest,
+    ): EmailChangePending =
+        call(
+            "POST",
+            "/otp/v1/account/email/change",
+            encode(ChangeEmailRequest.serializer(), request),
+            signer,
+            null,
+            EmailChangePending.serializer(),
+        )
+
+    suspend fun confirmEmailChange(
+        signer: Signer,
+        request: ConfirmEmailRequest,
+    ): AccountEmail =
+        call(
+            "POST",
+            "/otp/v1/account/email/confirm",
+            encode(ConfirmEmailRequest.serializer(), request),
+            signer,
+            null,
+            AccountEmail.serializer(),
+        )
+
+    suspend fun revokeOthers(signer: Signer): RevokeOthersResult =
+        call("POST", "/otp/v1/devices/revoke-others", null, signer, null, RevokeOthersResult.serializer())
+
+    /** Everything the server holds for the account, as the JSON document to save (ciphertext only). */
+    suspend fun exportAccount(signer: Signer): String =
+        call("GET", "/otp/v1/account/export", null, signer, null, JsonElement.serializer()).toString()
+
     suspend fun sessions(signer: Signer): SessionList = call("GET", "/otp/v1/sessions", null, signer, null, SessionList.serializer())
 
     companion object {
         const val PENDING = "pending"
         const val STALE = "stale_request"
+        private const val HISTORY_PAGE = 100
         private const val NONCE_BYTES = 16
         private const val MILLIS = 1000L
         private val JSON_TYPE = "application/json".toMediaType()
