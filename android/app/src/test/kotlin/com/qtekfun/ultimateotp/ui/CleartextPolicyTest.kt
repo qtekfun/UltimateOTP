@@ -26,8 +26,13 @@ class CleartextPolicyTest {
 
     @Test
     fun `the policy really does accept a plain-http LAN address`() {
-        val choice = EnrollmentPolicy.choose("http://192.168.1.5:8080", "", allowRemote = false)
+        val choice = EnrollmentPolicy.choose("http://192.168.1.5:8080", "", allowRemote = false, allowCleartext = true)
         assertEquals(EnrollmentPolicy.Choice.Use("http://192.168.1.5:8080"), choice)
+        // Release builds refuse cleartext (KB-4 fix): the LAN address is local but not https.
+        assertEquals(
+            EnrollmentPolicy.Choice.InsecureUrl,
+            EnrollmentPolicy.choose("http://192.168.1.5:8080", "", allowRemote = false),
+        )
         assertTrue(EnrollmentPolicy.isLocal("http://192.168.1.5"))
     }
 

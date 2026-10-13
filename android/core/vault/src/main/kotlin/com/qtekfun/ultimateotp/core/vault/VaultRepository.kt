@@ -7,9 +7,11 @@ import com.qtekfun.ultimateotp.core.crypto.ByteFields
 import com.qtekfun.ultimateotp.core.crypto.DeviceKeys
 import com.qtekfun.ultimateotp.core.crypto.Sodium
 import com.qtekfun.ultimateotp.core.crypto.wipe
+import com.qtekfun.ultimateotp.core.importers.ImportedAccount
 import com.qtekfun.ultimateotp.core.otp.OtpParams
 import com.qtekfun.ultimateotp.core.sync.AccountState
 import com.qtekfun.ultimateotp.core.sync.SyncStore
+import com.qtekfun.ultimateotp.core.sync.model.ItemOrder
 import com.qtekfun.ultimateotp.core.sync.model.ItemRow
 import com.qtekfun.ultimateotp.core.sync.model.VaultCipher
 import com.qtekfun.ultimateotp.core.sync.model.VaultItem
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -51,23 +54,23 @@ class VaultRepository(
 
     @Volatile private var device: DeviceKeys? = null
 
-    /** Decrypted items, sorted for display; empty while locked. Rows that fail to decrypt are skipped. */
-    val items: Flow<List<VaultItem>> =
+    /** Every live decrypted item, trashed or not; empty while locked. Rows that fail to decrypt are skipped. */
+    private val allItems: Flow<List<VaultItem>> =
         combine(dao.observeItems(), _state) { rows, state ->
             val c = cipher
             if (state != VaultState.UNLOCKED || c == null) {
                 emptyList()
             } else {
-                rows
-                    .mapNotNull { e -> runCatching { c.effective(e.toRow()) }.getOrNull() }
-                    .sortedWith(
-                        compareByDescending<VaultItem> { it.favorite }.thenBy { it.otp.issuer.lowercase() }.thenBy {
-                            it.otp.label
-                                .lowercase()
-                        },
-                    )
+                rows.mapNotNull { e -> runCatching { c.effective(e.toRow()) }.getOrNull() }
             }
         }
+
+    /** The entries to show, in display order ([ItemOrder]); trashed ones are not in it. Empty while locked. */
+    val items: Flow<List<VaultItem>> = allItems.map { all -> ItemOrder.sorted(all.filterNot { it.trashed }) }
+
+    /** The trash, most recently deleted first. Items older than 30 days go with [purgeExpired]. */
+    val trashed: Flow<List<VaultItem>> =
+        allItems.map { all -> all.filter { it.trashed }.sortedWith(compareByDescending<VaultItem> { it.trashChanged }.thenBy { it.id }) }
 
     /** Creates an empty offline vault with a fresh key (milestone M1: no account needed). */
     suspend fun create() =
@@ -155,48 +158,166 @@ class VaultRepository(
             write(item.copy(otp = item.otp.copy(counter = item.otp.counter + 1), updated = clock(), updatedBy = deviceId()))
         }
 
-    suspend fun delete(id: UUID) =
+    /**
+     * Deletes an entry: it moves to the trash and can be restored for 30 days ([trash], [restore]).
+     * Kept under this name so screens written before the trash existed behave like it.
+     */
+    suspend fun delete(id: UUID) = trash(id)
+
+    suspend fun trash(id: UUID) = setTrashed(id, true)
+
+    /** Undo of [trash]. */
+    suspend fun restore(id: UUID) = setTrashed(id, false)
+
+    private suspend fun setTrashed(
+        id: UUID,
+        trashed: Boolean,
+    ) = mutex.withLock {
+        val row = dao.item(id.toString())?.toRow() ?: return@withLock
+        val item = requireCipher().effective(row) ?: return@withLock
+        if (item.trashed == trashed) return@withLock
+        // A state change, not an edit: `updated` stays, so it never competes with real edits.
+        write(item.copy(trashed = trashed, trashChanged = clock()))
+    }
+
+    /** Removes an entry for good (no restore); a synced entry becomes a tombstone for the other devices. */
+    suspend fun purge(id: UUID) =
         mutex.withLock {
             val row = dao.item(id.toString())?.toRow() ?: return@withLock
-            if (!row.onServer) {
-                dao.delete(listOf(id.toString()))
-            } else {
-                dao.upsert(listOf(ItemEntity.of(row.copy(localBlob = null, localDeleted = true, dirty = true))))
-            }
+            purgeRow(row)
         }
 
-    /** Adds [accounts], skipping ones already in the vault (same type, secret, issuer and label). */
-    suspend fun import(accounts: List<OtpParams>): ImportSummary =
+    private suspend fun purgeRow(row: ItemRow) {
+        if (!row.onServer) {
+            dao.delete(listOf(row.id.toString()))
+        } else {
+            dao.upsert(listOf(ItemEntity.of(row.copy(localBlob = null, localDeleted = true, dirty = true))))
+        }
+    }
+
+    /** Empties the trash. @return how many entries were removed. */
+    suspend fun emptyTrash(): Int = purgeWhere { it.trashed }
+
+    /** Removes the entries that have been in the trash for 30 days. @return how many. */
+    suspend fun purgeExpired(): Int {
+        val now = clock()
+        return purgeWhere { it.trashExpired(now) }
+    }
+
+    private suspend fun purgeWhere(predicate: (VaultItem) -> Boolean): Int =
+        mutex.withLock {
+            val c = requireCipher()
+            val doomed =
+                dao.items().map { it.toRow() }.filter { row ->
+                    runCatching { c.effective(row) }.getOrNull()?.let(predicate) == true
+                }
+            doomed.forEach { purgeRow(it) }
+            doomed.size
+        }
+
+    /**
+     * Drag and drop: moves the entry shown at [from] to position [to] of [items]' current list
+     * (indexes of the active list, the trash excluded). Persists the new order keys; the other
+     * devices get them with the next sync.
+     */
+    suspend fun move(
+        from: Int,
+        to: Int,
+    ) = mutex.withLock {
+        val c = requireCipher()
+        val active =
+            ItemOrder.sorted(
+                dao.items().mapNotNull { runCatching { c.effective(it.toRow()) }.getOrNull() }.filterNot { it.trashed },
+            )
+        val changed = ItemOrder.move(active, from, to, clock())
+        val rows =
+            changed.map { item ->
+                val row = dao.item(item.id.toString())?.toRow()
+                val blob = c.seal(item)
+                ItemEntity.of(row?.copy(localBlob = blob, localDeleted = false, dirty = true) ?: ItemRow.pending(item.id, blob))
+            }
+        if (rows.isNotEmpty()) dao.upsert(rows)
+    }
+
+    /** The apps and domains [id]'s code may be offered for (docs/autofill.md). */
+    suspend fun setAutofillAssociations(
+        id: UUID,
+        associations: List<String>,
+    ) = mutex.withLock {
+        val row = dao.item(id.toString())?.toRow() ?: return@withLock
+        val item = requireCipher().effective(row) ?: return@withLock
+        val clean = associations.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.distinct()
+        if (clean != item.autofill) write(item.copy(autofill = clean, updated = clock(), updatedBy = deviceId()))
+    }
+
+    /** Adds [accounts], skipping ones already in the vault (same issuer, account and secret). */
+    suspend fun import(accounts: List<OtpParams>): ImportSummary = importAccounts(accounts.map { ImportedAccount(it) })
+
+    /**
+     * Adds imported accounts with their notes and favorite flags. An account that matches one
+     * already in the vault (same issuer, account and secret, ignoring case and spaces in the
+     * names) is skipped; if the match is in the trash it is restored instead.
+     */
+    suspend fun importAccounts(accounts: List<ImportedAccount>): ImportSummary =
         mutex.withLock {
             val c = requireCipher()
             val existing =
                 dao
                     .items()
-                    .mapNotNull { runCatching { c.effective(it.toRow()) }.getOrNull() }
-                    .map { key(it.otp) }
-                    .toMutableSet()
+                    .mapNotNull { e -> runCatching { c.effective(e.toRow()) }.getOrNull() }
+                    .associateBy { dedupKey(it.otp) }
+                    .toMutableMap()
             val now = clock()
             val rows = mutableListOf<ItemEntity>()
             var duplicates = 0
-            for (otp in accounts) {
-                if (!existing.add(key(otp))) {
-                    duplicates++
+            var restored = 0
+            for (account in accounts) {
+                val key = dedupKey(account.otp)
+                val match = existing[key]
+                if (match != null) {
+                    if (match.trashed) {
+                        val back = match.copy(trashed = false, trashChanged = now)
+                        existing[key] = back
+                        rows += ItemEntity.of(sealedRow(match.id, back))
+                        restored++
+                    } else {
+                        duplicates++
+                    }
                     continue
                 }
-                val item = VaultItem(UUID.randomUUID(), otp, created = now, updated = now, updatedBy = deviceId())
+                val item =
+                    VaultItem(
+                        UUID.randomUUID(),
+                        account.otp,
+                        account.notes,
+                        account.favorite,
+                        null,
+                        now,
+                        now,
+                        deviceId(),
+                    )
+                existing[key] = item
                 rows += ItemEntity.of(ItemRow.pending(item.id, c.seal(item)))
             }
             dao.upsert(rows)
-            ImportSummary(added = rows.size, duplicates = duplicates)
+            ImportSummary(added = rows.size - restored, duplicates = duplicates, restored = restored)
         }
 
-    private fun key(otp: OtpParams) = listOf(otp.type, otp.secret.toList(), otp.issuer, otp.label)
+    private suspend fun sealedRow(
+        id: UUID,
+        item: VaultItem,
+    ): ItemRow {
+        val blob = requireCipher().seal(item)
+        return dao.item(id.toString())?.toRow()?.copy(localBlob = blob, localDeleted = false, dirty = true) ?: ItemRow.pending(id, blob)
+    }
 
-    /** Every live item, decrypted (for export). */
-    suspend fun snapshot(): List<VaultItem> =
+    private fun dedupKey(otp: OtpParams) = listOf(otp.issuer.trim().lowercase(), otp.label.trim().lowercase(), otp.secret.toList())
+
+    /** Every live item, decrypted (for export); the trash only with [includeTrashed]. */
+    suspend fun snapshot(includeTrashed: Boolean = true): List<VaultItem> =
         mutex.withLock {
             val c = requireCipher()
-            dao.items().mapNotNull { c.effective(it.toRow()) }
+            dao.items().mapNotNull { c.effective(it.toRow()) }.filter { includeTrashed || !it.trashed }
         }
 
     // ---- SyncStore ------------------------------------------------------------------------
@@ -282,4 +403,6 @@ data class ImportSummary(
     val added: Int,
     val duplicates: Int,
     val rejected: Int = 0,
+    /** Entries that were in the trash and came back because the file contained them again. */
+    val restored: Int = 0,
 )
