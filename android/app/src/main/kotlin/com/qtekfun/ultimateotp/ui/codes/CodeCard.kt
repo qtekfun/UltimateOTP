@@ -58,6 +58,7 @@ import com.qtekfun.ultimateotp.ui.theme.status
 
 private const val MILLIS = 1_000L
 private const val PREVIEW_SECONDS = 5
+private const val DENSE_FROM = 6
 
 /** The code of [item] at [now] and when it changes; HOTP never expires on its own. */
 data class CodeView(
@@ -178,7 +179,12 @@ fun CodeCard(
             ) {
                 Text(
                     codeText,
-                    style = if (compact) CodeStyles.Medium else CodeStyles.Large,
+                    style =
+                        when {
+                            !compact -> CodeStyles.Large
+                            view.code.length > DENSE_FROM -> CodeStyles.Dense
+                            else -> CodeStyles.Medium
+                        },
                     color = codeColor,
                     maxLines = 1,
                     softWrap = false,
@@ -238,20 +244,20 @@ private fun Leading(
     label: String,
     iconKey: String?,
     size: Dp,
-    dragHandle: Modifier,
+    modifier: Modifier,
 ) {
     val success = MaterialTheme.status.success
     val onSuccess = MaterialTheme.colorScheme.surface
     Crossfade(copied, label = "avatar") { done ->
         if (done) {
             Box(
-                dragHandle.size(size).clip(RoundedCornerShape(size * 0.3f)).background(success),
+                modifier.size(size).clip(RoundedCornerShape(size * 0.3f)).background(success),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(Icons.Filled.Check, contentDescription = null, tint = onSuccess, modifier = Modifier.size(size * 0.55f))
             }
         } else {
-            IssuerAvatar(issuer, label, modifier = dragHandle, iconKey = iconKey, size = size)
+            IssuerAvatar(issuer, label, modifier = modifier, iconKey = iconKey, size = size)
         }
     }
 }

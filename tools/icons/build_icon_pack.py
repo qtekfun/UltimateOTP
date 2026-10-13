@@ -24,7 +24,7 @@ pinterest tumblr medium wordpress notion trello atlassian jira confluence asana 
 revolut monzo n26 robinhood okx kucoin trezor blockchaindotcom namecheap godaddy porkbun gandi ionos
 hostinger cpanel synology qnap truenas proxmox ubuntu debian fedora archlinux redhat mozilla firefox
 thunderbird brave opera googlechrome tuta zoho duckduckgo mullvad nordvpn expressvpn surfshark
-privateinternetaccess tailscale zerotier wireguard openvpn sentry datadog grafana pagerduty circleci
+privateinternetaccess tailscale zerotier wireguard openvpn sentry datadog pagerduty circleci
 jenkins snyk yarn rubygems packagist nuget gradle jetbrains unity epicgames playstation ubisoft
 battledotnet gogdotcom itchdotio humblebundle riotgames roblox mailchimp mailgun airbnb uber ebay etsy
 aliexpress ikea wix squarespace webflow figma autodesk dribbble behance miro airtable zapier ifttt

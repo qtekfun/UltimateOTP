@@ -68,7 +68,6 @@ internal val SIMPLE_ICONS: Map<String, IssuerIcon> =
         "googlecloud" to IssuerIcon(R.drawable.si_googlecloud, 0x4285F4, "Google Cloud"),
         "googledrive" to IssuerIcon(R.drawable.si_googledrive, 0x4285F4, "Google Drive"),
         "gradle" to IssuerIcon(R.drawable.si_gradle, 0x02303A, "Gradle"),
-        "grafana" to IssuerIcon(R.drawable.si_grafana, 0xF46800, "Grafana"),
         "hackerone" to IssuerIcon(R.drawable.si_hackerone, 0x494649, "HackerOne"),
         "hackthebox" to IssuerIcon(R.drawable.si_hackthebox, 0x9FEF00, "Hack The Box"),
         "hetzner" to IssuerIcon(R.drawable.si_hetzner, 0xD50C2D, "Hetzner"),

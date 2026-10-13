@@ -93,6 +93,17 @@ at most 640 dp wide and centred.
   click and long-click actions. Targets are at least 48 dp. Text is in sp and the layouts were
   rendered at font scale 1.3 and 2.0.
 
+## Languages
+
+English is the default (`res/values/strings.xml`); Spanish is `res/values-es/strings.xml`. Every
+user-visible string is a resource: counts are `<plurals>`, several arguments use `%1$s` style
+placeholders, and lint fails the build on `MissingTranslation`. `StringsParityTest` checks that each
+`values-xx` has every key with the same placeholders. To add a language: copy `values/strings.xml` to
+`values-xx/`, translate it, and add the tag to `AppLanguage.SUPPORTED` (the language row in Settings)
+and a `language_xx` string. `res/resources.properties` makes the Android Gradle plugin generate the
+`locales_config.xml` (system per-app language, Android 13+) from the `values-xx` folders. Before
+Android 13 the Settings row stores the choice and applies it in `attachBaseContext`.
+
 ## Icon pack policy
 
 See [icons.md](icons.md): Simple Icons (CC0), vector only, referenced by `R.drawable`, never by a

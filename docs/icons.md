@@ -1,7 +1,7 @@
 # Issuer icon pack
 
 The codes list shows the logo of the service next to every account. The logos are a curated set of
-**172 vector drawables** (`android/app/src/main/res/drawable/si_<slug>.xml`) taken from
+**171 vector drawables** (`android/app/src/main/res/drawable/si_<slug>.xml`) taken from
 [Simple Icons](https://github.com/simple-icons/simple-icons).
 
 | | |

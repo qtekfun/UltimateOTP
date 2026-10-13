@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 UltimateOTP contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<lint>
+    <!--
+      The bundled brand icons (Simple Icons, CC0) are single detailed paths drawn at 24 dp.
+      Lint's size heuristic is for large illustrations; simplifying a trademarked logo would change it.
+    -->
+    <issue id="VectorPath">
+        <ignore path="**/res/drawable/si_*.xml" />
+    </issue>
+</lint>
