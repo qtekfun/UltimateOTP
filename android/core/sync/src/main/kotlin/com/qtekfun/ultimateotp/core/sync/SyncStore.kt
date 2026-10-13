@@ -75,4 +75,7 @@ interface SyncStore {
 
     /** The current vault key bytes (for wraps, seals and rotation). Caller wipes the copy. */
     fun vaultKey(): ByteArray
+
+    /** After `device_revoked`: forget the account, keep every item as a pending local change. */
+    suspend fun leaveAccount()
 }

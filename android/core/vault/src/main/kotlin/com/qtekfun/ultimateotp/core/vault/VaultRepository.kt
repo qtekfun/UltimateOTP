@@ -250,7 +250,7 @@ class VaultRepository(
     override fun vaultKey(): ByteArray = vaultKey?.copyOf() ?: error("vault is locked")
 
     /** Forgets the account (after `device_revoked`): keeps the items, all pending again. */
-    suspend fun leaveAccount() =
+    override suspend fun leaveAccount() =
         mutex.withLock {
             val c = requireCipher()
             val local = VaultCipher(vaultKey(), "", c.keyEpoch)

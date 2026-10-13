@@ -22,6 +22,9 @@ naming:
 
 complexity:
   LongMethod:
+    # The contract fake server routes every endpoint in one table.
+    excludes:
+      - '**/testFixtures/**'
     # A screen composable is one declarative tree; splitting it only moves the length around.
     ignoreAnnotated:
       - Composable
@@ -59,6 +62,7 @@ style:
     # which are literal values by nature.
     excludes:
       - '**/test/**'
+      - '**/testFixtures/**'
       - '**/androidTest/**'
       - '**/*.kts'
       - '**/ui/theme/**'
