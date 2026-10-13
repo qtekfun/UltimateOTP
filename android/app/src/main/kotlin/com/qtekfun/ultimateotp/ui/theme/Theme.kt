@@ -6,41 +6,64 @@ package com.qtekfun.ultimateotp.ui.theme
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
+import com.qtekfun.ultimateotp.util.ThemeMode
 
-private val Navy = Color(0xFF1F3A5F)
-private val Sky = Color(0xFF9CC3F0)
+internal val LocalStatusColors = staticCompositionLocalOf { DarkStatusColors }
 
-/** Material 3 with dynamic color on Android 12+, the family's navy otherwise. */
+/** Status colours (success, warning, danger) of the current theme. */
+val MaterialTheme.status: StatusColors
+    @Composable @ReadOnlyComposable
+    get() = LocalStatusColors.current
+
+/**
+ * Dark-first Material 3. [dynamicColor] (Android 12+, off by default) takes the wallpaper palette;
+ * [amoled] makes the dark background true black.
+ */
 @Composable
-fun UotpTheme(content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
+fun UotpTheme(
+    mode: ThemeMode = ThemeMode.SYSTEM,
+    amoled: Boolean = false,
+    dynamicColor: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    val dark =
+        when (mode) {
+            ThemeMode.SYSTEM -> isSystemInDarkTheme()
+            ThemeMode.LIGHT -> false
+            ThemeMode.DARK -> true
+        }
     val context = LocalContext.current
     val colors =
         when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-                if (dark) {
-                    dynamicDarkColorScheme(
-                        context,
-                    )
-                } else {
-                    dynamicLightColorScheme(context)
-                }
+            dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+                if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
             }
 
             dark -> {
-                darkColorScheme(primary = Sky)
+                uotpDarkColors(amoled)
             }
 
             else -> {
-                lightColorScheme(primary = Navy)
+                uotpLightColors()
             }
         }
-    MaterialTheme(colorScheme = colors, content = content)
+    CompositionLocalProvider(LocalStatusColors provides if (dark) DarkStatusColors else LightStatusColors) {
+        MaterialTheme(colorScheme = colors, typography = UotpTypography, shapes = UotpShapes, content = content)
+    }
 }
+
+/** Whether [mode] resolves to dark right now (for the system bars). */
+@Composable
+fun isDark(mode: ThemeMode): Boolean =
+    when (mode) {
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
