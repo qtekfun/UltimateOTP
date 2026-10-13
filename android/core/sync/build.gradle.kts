@@ -27,3 +27,39 @@ dependencies {
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.kotest.property)
 }
+
+// The sync engine against the real Python server (RealServerContractTest, tag "contract"): needs
+// `uv`, so it is not part of `test` and `check`; CI runs it as its own job.
+val serverDir: Directory = isolated.rootProject.projectDirectory.dir("../server")
+val migrationsDir: Directory = isolated.rootProject.projectDirectory.dir("../contracts/db/migrations")
+
+tasks.test {
+    useJUnitPlatform { excludeTags("contract") }
+}
+
+tasks.register<Test>("contractTest") {
+    group = "verification"
+    description = "Runs the sync engine against `uv run ultimateotp api` (needs uv; docs/testing.md)."
+    val test = sourceSets.test.get()
+    testClassesDirs = test.output.classesDirs
+    classpath = test.runtimeClasspath
+    useJUnitPlatform { includeTags("contract") }
+    inputs.dir(serverDir.dir("src")).withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("serverSources")
+    inputs.dir(migrationsDir).withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("migrations")
+    systemProperty("uotp.server.dir", serverDir.asFile.absolutePath)
+    systemProperty("uotp.migrations.dir", migrationsDir.asFile.absolutePath)
+    testLogging {
+        events("passed", "failed", "skipped")
+        showStandardStreams = true
+    }
+    shouldRunAfter(tasks.test)
+}
+
+// Kover would wire every Test task into `koverVerify`, and with it `check`; contractTest needs uv.
+kover {
+    currentProject {
+        instrumentation {
+            disabledForTestTasks.add("contractTest")
+        }
+    }
+}
