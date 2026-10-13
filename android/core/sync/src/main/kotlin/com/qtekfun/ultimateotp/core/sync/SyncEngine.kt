@@ -22,6 +22,7 @@ import com.qtekfun.ultimateotp.core.sync.api.ApproveRequest
 import com.qtekfun.ultimateotp.core.sync.api.CommitRequest
 import com.qtekfun.ultimateotp.core.sync.api.DeviceKeyInput
 import com.qtekfun.ultimateotp.core.sync.api.EnrollRequest
+import com.qtekfun.ultimateotp.core.sync.api.EnrollResponse
 import com.qtekfun.ultimateotp.core.sync.api.HeadInput
 import com.qtekfun.ultimateotp.core.sync.api.JoinRequest
 import com.qtekfun.ultimateotp.core.sync.api.KeyBundleDto
@@ -31,6 +32,7 @@ import com.qtekfun.ultimateotp.core.sync.api.PutKeysRequest
 import com.qtekfun.ultimateotp.core.sync.api.RotateRequest
 import com.qtekfun.ultimateotp.core.sync.api.SessionInfo
 import com.qtekfun.ultimateotp.core.sync.api.Signer
+import com.qtekfun.ultimateotp.core.sync.api.SignupRequest
 import com.qtekfun.ultimateotp.core.sync.api.SrpAttributes
 import com.qtekfun.ultimateotp.core.sync.api.SrpSessionRequest
 import com.qtekfun.ultimateotp.core.sync.api.SrpSetupDto
@@ -104,6 +106,40 @@ class SyncEngine(
     // ---- account bootstrap and enrollment ----------------------------------------------------
 
     /**
+     * The keys of a new account, made on this device before anything is sent: this offline
+     * vault's key wrapped for a new recovery key and, when there is one, the password, with the
+     * SRP login record (crypto-format.md §4, §4.4). Only wraps leave the device.
+     */
+    class NewAccountKeys internal constructor(
+        val bundle: KeyBundleDto,
+        /** The 24-word recovery key (decision 10), to show once. */
+        val recoveryWords: List<String>,
+    )
+
+    /** Wraps this offline vault's key for a new account (slow with a password: Argon2id). */
+    fun newAccountKeys(password: String?): NewAccountKeys {
+        val vk = store.vaultKey()
+        val rk = RecoveryKey.generate()
+        val kekRk = VaultKeyWraps.recoveryKek(rk)
+        val derived = password?.let { PasswordKdf.deriveNew(it, kdfLadder()) }
+        try {
+            val bundle = VaultKeyWraps.bundle(vk, FIRST_EPOCH, kekRk, derived?.second, derived?.first)
+            // The SRP login record (crypto-format.md §4.4) goes with the password wraps.
+            val srp =
+                derived
+                    ?.second
+                    ?.let { kek -> Srp.setup(kek) }
+                    ?.let { SrpSetupDto(it.srpUserId, B64u.encode(it.salt), B64u.encode(it.verifier)) }
+            return NewAccountKeys(bundle.toDto().copy(srp = srp), RecoveryKey.toWords(rk))
+        } finally {
+            vk.wipe()
+            rk.wipe()
+            kekRk.wipe()
+            derived?.second?.wipe()
+        }
+    }
+
+    /**
      * First device of a new account: turns this offline vault into the account's vault. Its vault
      * key becomes epoch 1, wrapped for the password (if any) and a new recovery key.
      * @return the 24 recovery words, to show once.
@@ -117,55 +153,70 @@ class SyncEngine(
     ): List<String> =
         mutex.withLock {
             val api = apiFor(serverUrl)
+            val created = newAccountKeys(password)
             val keys = DeviceKeys.generate()
-            val vk = store.vaultKey()
-            val rk = RecoveryKey.generate()
-            val kekRk = VaultKeyWraps.recoveryKek(rk)
-            val derived = password?.let { PasswordKdf.deriveNew(it, kdfLadder()) }
-            try {
-                val bundle = VaultKeyWraps.bundle(vk, FIRST_EPOCH, kekRk, derived?.second, derived?.first)
-                // The SRP login record (crypto-format.md §4.4) goes with the password wraps.
-                val srp =
-                    derived
-                        ?.second
-                        ?.let { kek ->
-                            Srp.setup(kek)
-                        }?.let { SrpSetupDto(it.srpUserId, B64u.encode(it.salt), B64u.encode(it.verifier)) }
-                val request =
-                    EnrollRequest(
-                        keys.ed25519PublicB64u,
-                        keys.x25519PublicB64u,
-                        label,
-                        bundle.toDto().copy(srp = srp),
-                        api.appVersion,
-                        emailCode,
-                    )
-                val response =
-                    api.enroll(
-                        token,
-                        Signer(keys, UotpApi.PENDING),
-                        request,
-                    )
-                store.saveDeviceKeys(keys)
-                val account =
-                    AccountState(
-                        serverUrl = serverUrl,
-                        accountId = response.accountId,
-                        deviceId = response.device.deviceId,
-                        label = label,
-                        keyEpoch = FIRST_EPOCH,
-                        devicesRevision = response.head.devicesRevision,
-                        pinned = listOf(PinnedDevice(response.device.deviceId, keys.ed25519PublicB64u, label)),
-                        clockOffset = api.clockOffset,
-                    )
-                store.installVaultKey(vk, FIRST_EPOCH, response.accountId, account)
-                return@withLock RecoveryKey.toWords(rk)
-            } finally {
-                vk.wipe()
-                kekRk.wipe()
-                derived?.second?.wipe()
-            }
+            val request =
+                EnrollRequest(keys.ed25519PublicB64u, keys.x25519PublicB64u, label, created.bundle, api.appVersion, emailCode)
+            val response = api.enroll(token, Signer(keys, UotpApi.PENDING), request)
+            adoptNewAccount(api, serverUrl, keys, response, label)
+            created.recoveryWords
         }
+
+    /**
+     * Public sign-up (`POST /otp/v1/signup`, contract 1.1.0, like Ente Auth): creates the account
+     * from this offline vault with [created] (made by [newAccountKeys] with a password) and
+     * registers this device, proving possession of its new key (`X-UOTP-Device: pending`).
+     * Local items stay pending; the next [sync] uploads them as the initial vault.
+     */
+    suspend fun signup(
+        serverUrl: String,
+        email: String,
+        emailCode: String?,
+        created: NewAccountKeys,
+        label: String,
+    ) = mutex.withLock {
+        check(store.account() == null) { "this device already has an account" }
+        requireNotNull(created.bundle.srp) { "sign-up needs a password" }
+        val api = apiFor(serverUrl)
+        val keys = DeviceKeys.generate()
+        val request =
+            SignupRequest(
+                email = email,
+                emailCode = emailCode,
+                device = NewDevice(keys.ed25519PublicB64u, keys.x25519PublicB64u, label, api.appVersion),
+                keys = created.bundle,
+            )
+        val response = api.signup(Signer(keys, UotpApi.PENDING), request)
+        adoptNewAccount(api, serverUrl, keys, response, label)
+    }
+
+    /** Bootstrap and sign-up: this device's keys and this vault's key become the account's (epoch 1). */
+    private suspend fun adoptNewAccount(
+        api: UotpApi,
+        serverUrl: String,
+        keys: DeviceKeys,
+        response: EnrollResponse,
+        label: String,
+    ) {
+        store.saveDeviceKeys(keys)
+        val account =
+            AccountState(
+                serverUrl = serverUrl,
+                accountId = response.accountId,
+                deviceId = response.device.deviceId,
+                label = label,
+                keyEpoch = FIRST_EPOCH,
+                devicesRevision = response.head.devicesRevision,
+                pinned = listOf(PinnedDevice(response.device.deviceId, keys.ed25519PublicB64u, label)),
+                clockOffset = api.clockOffset,
+            )
+        val vk = store.vaultKey()
+        try {
+            store.installVaultKey(vk, FIRST_EPOCH, response.accountId, account)
+        } finally {
+            vk.wipe()
+        }
+    }
 
     /** New or reinstalled device without another device at hand: password path (enrollment token). */
     suspend fun enrollWithPassword(
