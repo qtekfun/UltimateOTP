@@ -6,6 +6,7 @@ package com.qtekfun.ultimateotp.buildlogic
 import app.cash.licensee.LicenseeExtension
 import io.gitlab.arturbosch.detekt.Detekt
 import io.gitlab.arturbosch.detekt.extensions.DetektExtension
+import kotlinx.kover.gradle.plugin.dsl.KoverProjectExtension
 import org.gradle.api.GradleException
 import org.gradle.api.Project
 import org.gradle.api.artifacts.VersionCatalog
@@ -72,6 +73,7 @@ internal fun Project.configureQuality(android: Boolean) {
         apply("io.gitlab.arturbosch.detekt")
         apply("org.jlleitschuh.gradle.ktlint")
         apply("app.cash.licensee")
+        apply("org.jetbrains.kotlinx.kover")
     }
 
     extensions.configure<DetektExtension> {
@@ -120,6 +122,69 @@ internal fun Project.configureQuality(android: Boolean) {
     }
 
     registerForbiddenDependencyCheck(if (android) ANDROID_CLASSPATHS else JVM_CLASSPATHS)
+    configureCoverage()
+}
+
+/**
+ * Classes that are not production code: generated ones (Hilt and Dagger factories and
+ * components, Room's `_Impl`, the Compose compiler's singletons, `R`, `BuildConfig`) and the
+ * test fixtures of `:core:sync`.
+ */
+private val EXCLUDED_FROM_COVERAGE =
+    listOf(
+        "*.BuildConfig",
+        "*.R",
+        "*.R$*",
+        "*_Factory",
+        "*_Factory$*",
+        "*_HiltModules*",
+        "*_HiltComponents*",
+        "*_GeneratedInjector",
+        "*_MembersInjector",
+        "Hilt_*",
+        "hilt_aggregated_deps.*",
+        "dagger.hilt.internal.aggregatedroot.codegen.*",
+        "*_Impl",
+        "*_Impl$*",
+        "*ComposableSingletons*",
+        // The contract fake server and in-memory store are test code that lives in testFixtures.
+        "com.qtekfun.ultimateotp.core.sync.fake.*",
+    )
+
+/**
+ * Line coverage that only goes up: `./gradlew koverVerify` (part of `check`) fails below the
+ * module's floor in `config/coverage/thresholds.properties`. The floors are measured values
+ * minus a small margin, never targets (docs/testing.md).
+ */
+private fun Project.configureCoverage() {
+    val thresholds =
+        providers.fileContents(isolated.rootProject.projectDirectory.file("config/coverage/thresholds.properties"))
+    // `:core:otp` is `core.otp` (a colon would be a separator in .properties files).
+    val key = path.removePrefix(":").replace(':', '.')
+    val floor =
+        java.util
+            .Properties()
+            .apply {
+                thresholds.asText.orNull
+                    ?.reader()
+                    ?.use { load(it) }
+            }.getProperty(key)
+            ?.toInt()
+            ?: throw GradleException("config/coverage/thresholds.properties has no line for $key ($path)")
+    extensions.configure<KoverProjectExtension> {
+        reports {
+            filters {
+                excludes {
+                    classes(EXCLUDED_FROM_COVERAGE)
+                }
+            }
+            verify {
+                rule("line coverage of $path") {
+                    minBound(floor)
+                }
+            }
+        }
+    }
 }
 
 private fun Project.registerForbiddenDependencyCheck(names: List<String>) {
