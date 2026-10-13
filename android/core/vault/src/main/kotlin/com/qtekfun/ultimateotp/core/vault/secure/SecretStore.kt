@@ -23,6 +23,13 @@ interface SecretStore {
     fun delete(name: String)
 
     fun contains(name: String): Boolean
+
+    /**
+     * Cheap proof that [put] would work right now, without storing anything.
+     * @throws AuthenticationRequiredException if the user must authenticate first.
+     * @throws KeyInvalidatedException if the Keystore key is unusable.
+     */
+    fun checkUsable()
 }
 
 class AuthenticationRequiredException(
@@ -39,17 +46,22 @@ class InMemorySecretStore(
 ) : SecretStore {
     private val secrets = mutableMapOf<String, ByteArray>()
 
-    /** When false, reads fail like a Keystore key whose authentication window expired. */
+    /** When false, reads and writes fail like a Keystore key whose authentication window expired. */
     var authenticated = true
+
+    /** When true, every use fails like a Keystore key that was invalidated. */
+    var invalidated = false
 
     override fun put(
         name: String,
         secret: ByteArray,
     ) {
+        checkUsable()
         secrets[name] = secret.copyOf()
     }
 
     override fun get(name: String): ByteArray? {
+        if (invalidated) throw KeyInvalidatedException()
         if (requiresUserAuthentication && !authenticated && name in secrets) throw AuthenticationRequiredException()
         return secrets[name]?.copyOf()
     }
@@ -59,4 +71,9 @@ class InMemorySecretStore(
     }
 
     override fun contains(name: String): Boolean = name in secrets
+
+    override fun checkUsable() {
+        if (invalidated) throw KeyInvalidatedException()
+        if (requiresUserAuthentication && !authenticated) throw AuthenticationRequiredException()
+    }
 }

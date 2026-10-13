@@ -13,6 +13,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.qtekfun.ultimateotp.R
+import com.qtekfun.ultimateotp.auth.AuthGate
 import com.qtekfun.ultimateotp.core.otp.OtpAuthUri
 import com.qtekfun.ultimateotp.core.sync.login.EmailSignup
 import com.qtekfun.ultimateotp.ui.sync.SignupScreen
@@ -57,7 +58,11 @@ class SignupUiTest(
                         viewModelFactory {
                             initializer {
                                 built++
-                                SignupViewModel(EmailSignup(backend.engine, backend.apiFor, nowSeconds = { backend.server.now })) {}
+                                SignupViewModel(
+                                    EmailSignup(backend.engine, backend.apiFor, nowSeconds = { backend.server.now }),
+                                    {},
+                                    AuthGate(),
+                                )
                             }
                         },
                 )

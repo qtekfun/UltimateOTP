@@ -37,7 +37,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -46,6 +45,7 @@ import com.qtekfun.ultimateotp.R
 import com.qtekfun.ultimateotp.core.crypto.PasswordKdf
 import com.qtekfun.ultimateotp.core.vault.ImportOutcome
 import com.qtekfun.ultimateotp.core.vault.VaultTransfer
+import com.qtekfun.ultimateotp.ui.components.PasswordField
 import com.qtekfun.ultimateotp.util.AppSettings
 import com.qtekfun.ultimateotp.util.Settings
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -288,16 +288,9 @@ fun PasswordDialog(
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(first, {
-                    first = it
-                }, label = { Text(stringResource(R.string.password)) }, visualTransformation = PasswordVisualTransformation())
+                PasswordField(first, { first = it }, stringResource(R.string.password))
                 if (confirm) {
-                    OutlinedTextField(
-                        second,
-                        { second = it },
-                        label = { Text(stringResource(R.string.password_repeat)) },
-                        visualTransformation = PasswordVisualTransformation(),
-                    )
+                    PasswordField(second, { second = it }, stringResource(R.string.password_repeat))
                 }
             }
         },

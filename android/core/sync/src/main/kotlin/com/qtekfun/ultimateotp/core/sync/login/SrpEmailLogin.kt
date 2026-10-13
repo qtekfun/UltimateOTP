@@ -46,7 +46,11 @@ class SrpEmailLogin(
         password: String,
         label: String,
     ) {
-        val handshake = handshakes.remove(key(ticket.server, ticket.email)) ?: error("start the session first")
+        val handshake = handshakes[key(ticket.server, ticket.email)] ?: error("start the session first")
+        // Before the session is consumed: if the store needs the user to authenticate, the same
+        // handshake (and the code it already used) is still there for the retry.
+        engine.preflight()
+        handshakes.remove(key(ticket.server, ticket.email))
         engine.completeSrp(ticket.server, handshake, password, label)
         attributes.remove(key(ticket.server, ticket.email))
     }

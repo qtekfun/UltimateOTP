@@ -37,6 +37,10 @@ fun accountProblemText(problem: AccountProblem): String =
             stringResource(R.string.fail_network)
         }
 
+        AccountProblem.Unexpected -> {
+            stringResource(R.string.problem_unexpected)
+        }
+
         is AccountProblem.Server -> {
             stringResource(R.string.fail_server)
         }

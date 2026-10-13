@@ -19,7 +19,7 @@ seen to pass.
 | 3 | Server process test | `server/tests/test_process.py` | same | `python -m ultimateotp migrate` and `api` start from `UOTP_*` variables alone, answer, and stop on SIGTERM | Docker image, Traefik, TLS |
 | 4 | Android unit tests (JUnit 5) | `android/core/*/src/test` | `./gradlew check`; CI `android` | Crypto against vectors, OTP against RFCs, merge, codec, sync engine against `FakeUotpServer` | Minified code, native libraries of a real ABI, a real server |
 | 5 | Android property tests (kotest) | `*PropertiesTest`, `PasswordKdfLadderTest`, `ItemCipherPropertiesTest` | same | The same code over random secrets/times/items; the KDF ladder over every memory figure | Same as 4 |
-| 6 | Robolectric Compose tests | `android/app/src/test/.../ui` | same | Screens and view models tapped through with real crypto against the fake server, at the cover (411 dp) and inner (791 dp) window sizes, across a recreate; the lapsed-authentication crash paths | Real window sizes, real Keystore, R8, a real Activity from the launcher |
+| 6 | Robolectric Compose tests | `android/app/src/test/.../ui` | same | Screens and view models tapped through with real crypto against the fake server, at the cover (411 dp) and inner (791 dp) window sizes, across a recreate; the lapsed-authentication paths (`ExpiredAuthenticationTest`: prompt, cancel, success, key invalidated, at first run, unlock, sign-up and login) | Real window sizes, real Keystore, R8, a real Activity from the launcher |
 | 7 | R8 mapping check | `verifyMinifiedBuild` in `android/app/build.gradle.kts`, part of `check` | same, runs R8 once | Names reached by reflection (JNA, ionspin, Room `_Impl`, activity, application) kept their names; serializers and engine classes were not removed | That the minified app *behaves*: only that those names exist |
 | 8 | Contract test | `RealServerContractTest` in `:core:sync` (tag `contract`) | `./gradlew :core:sync:contractTest`; CI `contract` | The Android sync engine against the real Python server over HTTP: sign-up, password login on a second device, live events, revocation, clock skew, lockout, CLI-minted token + recovery words | Production TLS/proxy, a real email relay |
 | 9 | Device suite | `android/app/src/androidTest` + `.github/scripts/device-tests.sh` | CI `device` (emulator, KVM) | The **minified release build** starts, signs up against a real server, logs in again from a fresh install, works offline; Argon2id at the maximum step on a real native library | See "Known gaps" |
@@ -97,11 +97,13 @@ between runs), so password derivation, the SRP proof and the key unwrap run for 
 | `SignUpJourneyTest` | "Create account", server + email, code, password (Argon2id), 24 words, confirm, create, codes screen | yes |
 | `LoginJourneyTest` | fresh install, "Log in", email, password (SRP), sync, codes screen | yes |
 | `KdfMaxStepTest` | debug build: 4 passes / 1 GiB against a PyNaCl key; the step this device would pick, derived and re-read | yes |
-| `LockedDeviceSignUpTest` | `locksettings set-pin`, wait out the 30 s Keystore window, tap "Create account": the app must survive | **no**: fails today (KB-3) |
+| `LockedDeviceSignUpTest` | `locksettings set-pin`, wait out the 30 s Keystore window, tap "Create account": the app must survive | **no**: KB-3 is fixed on the JVM, but the real prompt has never been seen on a device |
 | `ExportImportJourneyTest` | encrypted export and re-import through the system document picker | **no**: depends on DocumentsUI selectors, unverified |
 
 Non-blocking steps print a `::warning::` with their result; promote them to blocking (move them to
-`blocking` in `device-tests.sh`) when KB-3 is fixed and the picker test has passed three times.
+`blocking` in `device-tests.sh`) once `LockedDeviceSignUpTest` and the picker test have each passed
+three times on an emulator. Note that on that test the system prompt is shown now (the app asks the
+person to authenticate instead of dying), so the test driver must confirm the PIN to get past it.
 
 ## The 32-bit ABI and the key derivation
 
@@ -135,18 +137,50 @@ with 1.5x headroom.
 
 Each is a test written to the *correct* behaviour, run once to confirm it fails, and then marked
 `@Disabled("KNOWN BUG KB-n ...")` (or `xfail(strict=True)` in pytest, which turns red when the bug
-is fixed). The guard in layer 10 refuses any other disabled test. **Production code was not
-changed**; these are for the owner.
+is fixed). The guard in layer 10 refuses any other disabled test. When the suite was written
+production code was not changed; KB-3 has since been fixed (below) and its tests enabled.
 
 | ID | Where | What | Test |
 |---|---|---|---|
 | KB-1 | `OtpAuthUri.parse` | A colon in an issuer or an account name corrupts the entry on the `otpauth` round trip: `format` percent-encodes it, `parse` splits the *decoded* label at its first colon. `("a:b","c")` comes back as label `b:c`; `("","x:y")` as issuer `x`, label `y` | `OtpPropertiesTest` |
 | ~~KB-2~~ | server `Login.verify` | **Fixed (server 1.2.0).** An SRP login from a phone whose clock was more than 60 s off could never succeed: the session was consumed before the request timestamp was checked. `stale_request` is now answered first and consumes nothing | `RealServerContractTest`, `test_login.py::test_password_login_survives_a_stale_clock_retry`, `test_clock_skew.py` |
-| KB-3 | `RootViewModel.create`, `SignupViewModel.go`, `LoginViewModel.go` | `AuthenticationRequiredException` (a Keystore key with `setUserAuthenticationRequired(true)` and a 30 s window, which is every phone with a screen lock) is not an `IOException`, `CryptoException` or `ApiException`, so no handler matches and the coroutine ends the process. It happens when the vault key is first written (tap "Create account") and again at the end of sign-up, after a person has read an email and typed a password for more than 30 s. At that point the server has already created the account (`201`) and the device has not stored its keys: a retry meets `email_taken` | `ExpiredAuthenticationTest` |
+| ~~KB-3~~ **closed** | `RootViewModel.create`, `SignupViewModel.go`, `LoginViewModel.go` | `AuthenticationRequiredException` (a Keystore key with `setUserAuthenticationRequired(true)` and a 30 s window, which is every phone with a screen lock) is not an `IOException`, `CryptoException` or `ApiException`, so no handler matches and the coroutine ends the process. It happens when the vault key is first written (tap "Create account") and again at the end of sign-up, after a person has read an email and typed a password for more than 30 s. At that point the server has already created the account (`201`) and the device has not stored its keys: a retry meets `email_taken` | `ExpiredAuthenticationTest` |
 | KB-4 | manifest | The app tells the user to enroll on a LAN address (`EnrollmentPolicy` accepts `http://192.168...`), but the manifest has no network security config, and since Android 9 cleartext HTTP is refused for targetSdk 28+: every plain-http LAN URL fails as a network error | `CleartextPolicyTest` |
 | KB-5 | sign-up / login / sync screens | Form fields are `remember`, not `rememberSaveable`: unfolding or rotating the phone empties the server address, email and code. The step and the recovery words are kept (they live in the view model) | `SignupUiTest` |
 
-KB-3 matches both crash points of the report from the Pixel 9 Pro Fold (first tap on "Create
+### KB-3, closed: how
+
+* **Preflight.** `SecretStore.checkUsable()` initialises an encrypt cipher on the Keystore key
+  (that is where the authentication window is checked) and stores nothing; `SyncStore.ensureWritable()`
+  exposes it to the engine. `SyncEngine` calls it before `/signup`, `/enroll` (bootstrap and token
+  enrollment), `/srp/verify` and rotation, and again after any slow key derivation that precedes
+  the request. `SrpEmailLogin.complete` runs it before it consumes the SRP session, so a declined
+  prompt leaves the same session and emailed code for the retry. `EmailSignup.create` no longer
+  turns a failing first sync into a failed sign-up (the account exists by then).
+* **One gate.** `auth/AuthGate` (singleton). `gate.run { ... }` runs an operation; on
+  `AuthenticationRequiredException` it publishes a `Prompt`, the root composable (`AuthHost`, in
+  `AppRoot`) shows the existing BiometricPrompt / device-credential flow and answers it, and the
+  operation is run again from its start (at most three times, one prompt shared by concurrent
+  callers). Declined or failed prompts return `GateResult.Declined` and post a `Notice` (a dialog
+  at the root); `KeyInvalidatedException` returns `GateResult.KeyLost` with its own message; any
+  other exception propagates to the caller's own mapping, or `gate.attempt` turns it into
+  `GateResult.Failed` and a `Notice`. Cancelling returns the screen to where it was: welcome
+  screen at first run, the recovery words at the end of sign-up (draft kept), the password step at
+  login (session kept), the previous step in the sync screen.
+* **No dead process.** The app's background scope has a `CoroutineExceptionHandler`; every
+  `viewModelScope.launch` goes through the gate, a catch-all that maps to a failed state
+  (`SignupStep.Failed`, `LoginStep.Failed`, `SyncStep.Failed(UNEXPECTED)`, a `Notice`), or
+  swallows only what it can safely ignore (a failed device list refresh). `SyncController.syncNow`
+  catches any exception and resets `running`.
+* **Not verified on a device**: the real BiometricPrompt, the 30 s Keystore timing, and what an
+  Activity recreation does to a prompt that is on screen (the prompt is re-issued by
+  `LaunchedEffect`; the library's own retention of the fragment is not exercised here).
+* **Open**: `KeyInvalidatedException` is reported with a message that points to restoring from
+  sync or an import, but there is no in-app way to clear a lost Keystore key's orphaned
+  `vault_key` file, so a phone in that state stays on the lock screen. That needs a decision
+  (a destructive "start over" action) and was left out on purpose.
+
+KB-3 matched both crash points of the report from the Pixel 9 Pro Fold (first tap on "Create
 account", and again after code and password). It was derived from reading the code and
 reproduced on the JVM with a store that behaves like the lapsed key; it was *not* observed on a
 device, and the device log may show something else (see "Known gaps").
@@ -210,3 +244,8 @@ counted, because it needs `uv` and `check` must not.
 Kover line coverage is the measure used for the floors; branch coverage is lower (`core:sync` 49 %,
 `core:vault` 52 %, `app` 25 %) and is in `koverHtmlReport`. A floor says the number cannot fall, not
 that the covered lines are well asserted.
+
+After the KB-3 fix (`fix/keystore-auth`, integrated with `feat/show-password`): Android JVM tests 255
+(251 run, 4 disabled known bugs: KB-1, KB-4, KB-5 twice for the two window sizes). The fix added 16:
+`ExpiredAuthenticationTest` 4 to 15 (its three disabled KB-3 tests now run), `PreflightTest` 4
+(engine: no request while secrets cannot be stored), `VaultRepositoryTest` 1. Contract test: 7 run.
