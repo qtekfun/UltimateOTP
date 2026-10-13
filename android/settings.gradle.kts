@@ -22,6 +22,6 @@ dependencyResolutionManagement {
 rootProject.name = "UltimateOTP"
 // include(":app")
 include(":core:otp")
-// include(":core:crypto")
+include(":core:crypto")
 // include(":core:vault")
 // include(":core:sync")
