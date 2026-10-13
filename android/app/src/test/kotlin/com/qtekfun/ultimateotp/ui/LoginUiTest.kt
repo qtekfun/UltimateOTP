@@ -88,7 +88,7 @@ class LoginUiTest(
                 .setDriver(androidx.sqlite.driver.AndroidSQLiteDriver())
                 .build()
         vault = VaultRepository(db.dao(), InMemorySecretStore())
-        controller = SyncController(context, vault, appScope, AuthGate())
+        controller = SyncController(context, vault, appScope, testDiagnostics(), AuthGate())
         runBlocking {
             vault.create()
             // The first phone owns the account (a bootstrap with one entry).

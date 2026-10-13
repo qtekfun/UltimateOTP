@@ -71,6 +71,7 @@ android {
 dependencies {
     implementation(project(":core:vault"))
     implementation(project(":core:sync"))
+    implementation(project(":core:support"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

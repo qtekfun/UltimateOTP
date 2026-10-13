@@ -10,6 +10,7 @@ enrollment token from the server's CLI and QR pairing remain available as advanc
 
 - Design: [docs/design.md](docs/design.md)
 - Owner decisions: [docs/decisions.md](docs/decisions.md)
+- Import from other apps: [docs/import-formats.md](docs/import-formats.md); autofill: [docs/autofill.md](docs/autofill.md); error log: [docs/diagnostics.md](docs/diagnostics.md)
 - `server/`: backend (Python, FastAPI, SQLite); deployment in [docs/deploy.md](docs/deploy.md), live sync in [docs/sync.md](docs/sync.md), monitoring in [docs/monitoring/](docs/monitoring/)
 - `android/`: Android app (Kotlin, Jetpack Compose)
 - `contracts/`: HTTP API contract (OpenAPI)

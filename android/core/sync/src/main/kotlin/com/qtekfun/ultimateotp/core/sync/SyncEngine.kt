@@ -39,6 +39,7 @@ import com.qtekfun.ultimateotp.core.sync.api.SrpSetupDto
 import com.qtekfun.ultimateotp.core.sync.api.SrpVerifyRequest
 import com.qtekfun.ultimateotp.core.sync.api.UotpApi
 import com.qtekfun.ultimateotp.core.sync.api.Upsert
+import com.qtekfun.ultimateotp.core.sync.api.VaultChanges
 import com.qtekfun.ultimateotp.core.sync.api.VaultHead
 import com.qtekfun.ultimateotp.core.sync.model.ItemRow
 import com.qtekfun.ultimateotp.core.sync.model.Merge
@@ -595,30 +596,23 @@ class SyncEngine(
             server[id] =
                 base.copy(serverVersion = item.version, serverBlob = if (item.deleted) null else blob, serverDeleted = item.deleted)
         }
+        // A full answer lists every live item: one we hold that is missing is gone (its tombstone
+        // was compacted away), whether or not the server still sends the tombstone.
+        val vanished = vanishedIds(changes, rows.values)
+        vanished.forEach { server[it] = server.getValue(it).copy(serverBlob = null, serverDeleted = true) }
         current = verifyHead(changes.head, server.values, current, api)
         var conflicts = 0
         val upserts = mutableListOf<ItemRow>()
-        for (item in changes.items) {
-            val id = UUID.fromString(item.itemId)
+        for (id in changes.items.map { UUID.fromString(it.itemId) } + vanished) {
             val next = server.getValue(id)
             val local = rows[id]
             if (local == null || !local.dirty) {
                 upserts += next.copy(localBlob = null, localDeleted = false, dirty = false)
                 continue
             }
-            val mine = if (local.localDeleted) null else local.localBlob?.let { cipher.open(id, it) }
-            val theirs = cipher.committed(next)
-            val merged = Merge.resolve(mine, theirs)
-            upserts +=
-                if (merged.dirty && merged.item != null) {
-                    next.copy(localBlob = cipher.seal(merged.item), localDeleted = false, dirty = true)
-                } else {
-                    next.copy(localBlob = null, localDeleted = false, dirty = false)
-                }
-            merged.conflictCopy?.let {
-                conflicts++
-                upserts += ItemRow.pending(it.id, cipher.seal(it))
-            }
+            val (rows2, copies) = mergeLocal(local, next, cipher)
+            upserts += rows2
+            conflicts += copies
         }
         val accepted =
             current.copy(
@@ -628,6 +622,34 @@ class SyncEngine(
             )
         store.apply(upserts, emptyList(), accepted)
         return conflicts
+    }
+
+    /** Merges one pending local change with the server's new state of the item: the rows to store, and the copies made. */
+    private fun mergeLocal(
+        local: ItemRow,
+        next: ItemRow,
+        cipher: VaultCipher,
+    ): Pair<List<ItemRow>, Int> {
+        val mine = if (local.localDeleted) null else local.localBlob?.let { cipher.open(local.id, it) }
+        val merged = Merge.resolve(mine, cipher.committed(next), base = cipher.committed(local))
+        val row =
+            if (merged.dirty && merged.item != null) {
+                next.copy(localBlob = cipher.seal(merged.item), localDeleted = false, dirty = true)
+            } else {
+                next.copy(localBlob = null, localDeleted = false, dirty = false)
+            }
+        val copy = merged.conflictCopy?.let { ItemRow.pending(it.id, cipher.seal(it)) }
+        return listOfNotNull(row, copy) to (if (copy != null) 1 else 0)
+    }
+
+    /** On a `full` answer: the live items we hold that the server no longer lists. */
+    private fun vanishedIds(
+        changes: VaultChanges,
+        rows: Collection<ItemRow>,
+    ): List<UUID> {
+        if (!changes.full) return emptyList()
+        val listed = changes.items.mapTo(mutableSetOf()) { UUID.fromString(it.itemId) }
+        return rows.filter { it.serverLive && it.id !in listed }.map { it.id }
     }
 
     /** crypto-format.md §7: pinned signer, signature, manifest, no rollback. */
@@ -895,6 +917,27 @@ class SyncEngine(
             kekPw?.wipe()
         }
         return SyncResult.Synced(requireAccount().acceptedVersion, 0, 0)
+    }
+
+    /**
+     * Checks [password] (or [recoveryWords]) against the account's wraps without changing anything,
+     * so a step that needs them (rotation after "sign out everywhere else") fails before it starts.
+     * @throws CryptoException.AuthenticationFailed when they are wrong.
+     */
+    suspend fun checkRotationSecret(
+        password: String?,
+        recoveryWords: String?,
+    ) {
+        val account = requireAccount()
+        val keys = api(account).accountKeys(signer(account))
+        val (kekPw, _, kekRk) =
+            try {
+                rotationKeks(keys, password, recoveryWords)
+            } catch (e: IllegalArgumentException) {
+                throw CryptoException.AuthenticationFailed("wrong recovery key", e)
+            }
+        kekPw?.wipe()
+        kekRk.wipe()
     }
 
     private fun rotationKeks(

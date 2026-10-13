@@ -73,7 +73,7 @@ class SyncScreenUiTest(
         val db = Room.inMemoryDatabaseBuilder<VaultDatabase>(context).setDriver(AndroidSQLiteDriver()).build()
         vault = VaultRepository(db.dao(), InMemorySecretStore())
         runBlocking { vault.create() }
-        controller = SyncController(context, vault, scope, AuthGate())
+        controller = SyncController(context, vault, scope, testDiagnostics(), AuthGate())
     }
 
     @After

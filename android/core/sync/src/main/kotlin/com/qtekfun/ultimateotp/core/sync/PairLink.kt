@@ -74,18 +74,27 @@ object EnrollmentPolicy {
 
         /** Remote enrollment is off and no LAN address is configured. */
         data object Refused : Choice
+
+        /** The address is `http://`: Android refuses cleartext traffic (and a code or password must not travel in it). */
+        data object InsecureUrl : Choice
     }
 
     fun choose(
         serverUrl: String,
         enrollmentUrl: String,
         allowRemote: Boolean,
-    ): Choice =
-        when {
-            enrollmentUrl.isNotBlank() -> Choice.Use(enrollmentUrl)
-            isLocal(serverUrl) || allowRemote -> Choice.Use(serverUrl)
-            else -> Choice.Refused
-        }
+        allowCleartext: Boolean = false,
+    ): Choice {
+        val choice =
+            when {
+                enrollmentUrl.isNotBlank() -> Choice.Use(enrollmentUrl.trim())
+                isLocal(serverUrl) || allowRemote -> Choice.Use(serverUrl.trim())
+                else -> Choice.Refused
+            }
+        // The server always sits behind HTTPS; plain http is only for debuggable builds.
+        val cleartext = choice is Choice.Use && !choice.url.startsWith("https://", ignoreCase = true)
+        return if (cleartext && !allowCleartext) Choice.InsecureUrl else choice
+    }
 
     /** RFC 1918, loopback, link-local, ULA, CGNAT (Tailscale) and `.local`/`.lan`/`.home.arpa` names. */
     fun isLocal(url: String): Boolean {

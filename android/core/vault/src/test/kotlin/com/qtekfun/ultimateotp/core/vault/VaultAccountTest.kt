@@ -115,6 +115,6 @@ class VaultAccountTest {
             assertEquals(ImportSummary(added = 0, duplicates = 2), vault.import(listOf(a, b)))
             val gone = vault.snapshot().first { it.otp.label == "bob" }
             vault.delete(gone.id)
-            assertEquals(listOf("alice"), vault.snapshot().map { it.otp.label })
+            assertEquals(listOf("alice"), vault.snapshot(includeTrashed = false).map { it.otp.label })
         }
 }

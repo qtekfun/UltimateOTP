@@ -350,7 +350,7 @@ class ExpiredAuthenticationTest {
 
     private fun loginAtPassword(): Pair<LoginViewModel, LoginStep.Password> {
         ownerOnServer()
-        val controller = SyncController(context, vault, scope, gate)
+        val controller = SyncController(context, vault, scope, testDiagnostics(), gate)
         val model = LoginViewModel(SrpEmailLogin(engine(), backend.apiFor), controller, gate)
         model.sendCode(backend.server.url, "owner@example.org")
         waitUntilQuiet { model.step.value is LoginStep.Code }

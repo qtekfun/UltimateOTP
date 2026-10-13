@@ -70,6 +70,22 @@ account state from the database on every tick and emits `vault`/`devices`/`revok
 - Each open stream holds one connection; uvicorn's `limit_concurrency` and Traefik's `inflightreq`
   must leave room for them (deploy notes in `docs/deploy.md`).
 
+## Trash, history and the full answer (contract 1.2.0)
+
+- **Trash.** Deleting an entry in the app sets `trashed` in the item (docs/crypto-format.md §6.1)
+  and syncs as a normal edit; restore clears it. After 30 days each device removes the entry for
+  good (a normal deletion). "Delete forever" and "Empty trash" delete at once.
+- **Server history as the second net.** `GET /vault/trash` lists entries deleted for good within
+  the retention; the app's trash screen can bring one back (`HistoryRecovery`): decrypt the blob with
+  the item version it came with, write it as a pending change under the same id, sync.
+  `GET /vault/history` and `/vault/history/{version}?item_id=` give older versions of an entry the
+  same way. A rotation clears the server's history, so these only reach back to it.
+- **`VaultChanges.full`.** When true the answer is the complete live set: a local item that is
+  not in it is gone on the server even if no tombstone arrived (compacted), so the client drops it
+  unless it has an unsent change (then the edit wins and is committed again).
+- **Account events.** `account_deleted` on the stream: the device keeps its entries as an offline
+  vault and forgets the account.
+
 ## Fetching a delta after tombstone compaction
 
 `GET /otp/v1/vault?since=N` answers `full: true` (the complete live set) when `N` is `0` or older

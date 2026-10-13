@@ -21,6 +21,7 @@ room3 {
 
 dependencies {
     api(project(":core:sync"))
+    api(project(":core:importers"))
     api(libs.room.runtime)
     ksp(libs.room.compiler)
     implementation(libs.kotlinx.coroutines.android)

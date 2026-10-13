@@ -49,6 +49,11 @@ object ItemCodec {
             "created",
             "updated",
             "updated_by",
+            "trashed",
+            "trash_changed",
+            "order",
+            "order_changed",
+            "autofill",
         )
 
     fun encode(item: VaultItem): ByteArray {
@@ -70,6 +75,16 @@ object ItemCodec {
         fields["created"] = JsonPrimitive(item.created)
         fields["updated"] = JsonPrimitive(item.updated)
         fields["updated_by"] = JsonPrimitive(item.updatedBy)
+        // The v1.1 fields are written only when set, so items that never use them stay as they were.
+        if (item.trashed || item.trashChanged > 0) {
+            fields["trashed"] = JsonPrimitive(item.trashed)
+            fields["trash_changed"] = JsonPrimitive(item.trashChanged)
+        }
+        if (item.order != null) {
+            fields["order"] = JsonPrimitive(item.order)
+            fields["order_changed"] = JsonPrimitive(item.orderChanged)
+        }
+        if (item.autofill.isNotEmpty()) fields["autofill"] = JsonArray(item.autofill.map(::JsonPrimitive))
         return JsonObject(fields).toString().toByteArray(Charsets.UTF_8)
     }
 
@@ -102,6 +117,11 @@ object ItemCodec {
                 updated = o.long("updated") ?: 0,
                 updatedBy = o.str("updated_by").orEmpty(),
                 extra = o.filterKeys { it !in KNOWN },
+                trashed = o["trashed"]?.jsonPrimitive?.booleanOrNull ?: false,
+                trashChanged = o.long("trash_changed") ?: 0,
+                order = o.str("order"),
+                orderChanged = o.long("order_changed") ?: 0,
+                autofill = o["autofill"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty(),
             )
         } catch (e: IllegalArgumentException) {
             throw ItemFormatException("unreadable item", e)
