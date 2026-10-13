@@ -69,9 +69,10 @@ internal fun Project.configureAndroid(android: CommonExtension) {
  * unit-test runtime classpath. Compilation still sees the same API.
  */
 private fun Project.useJvmLibsodiumInUnitTests() {
-    val jvmBindings = libs.findLibrary("libsodium-bindings").get().map {
-        "${it.module.group}:${it.module.name}-jvm:${it.versionConstraint.requiredVersion}"
-    }
+    val jvmBindings =
+        libs.findLibrary("libsodium-bindings").get().map {
+            "${it.module.group}:${it.module.name}-jvm:${it.versionConstraint.requiredVersion}"
+        }
     configurations.configureEach {
         if (name.endsWith("UnitTestRuntimeClasspath")) {
             exclude(mapOf("group" to "com.ionspin.kotlin", "module" to "multiplatform-crypto-libsodium-bindings-android"))
