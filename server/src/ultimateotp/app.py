@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ultimateotp import __version__, errors
+from ultimateotp.alerts import Alerts
 from ultimateotp.clock import Clock, SystemClock
 from ultimateotp.db import Database
 from ultimateotp.events import Broker
@@ -82,19 +83,34 @@ def build_limiter(settings: Settings, clock: Clock) -> RateLimiter:
             "auth_failure": Limit(settings.auth_failure_rate_per_s, settings.auth_failure_burst),
             "mint": Limit(settings.mint_rate_per_s, settings.mint_burst),
             "write": Limit(settings.write_rate_per_s, settings.write_burst),
+            "srp": Limit(settings.srp_rate_per_s, settings.srp_burst),
+            "email_ip": Limit(settings.email_ip_per_hour / 3600, settings.email_ip_burst),
+            "email_address": Limit(
+                settings.email_address_per_hour / 3600, settings.email_address_burst
+            ),
         },
         clock,
     )
 
 
 def create_app(
-    settings: Settings, clock: Clock | None = None, limiter: RateLimiter | None = None
+    settings: Settings,
+    clock: Clock | None = None,
+    limiter: RateLimiter | None = None,
+    alerts: Alerts | None = None,
 ) -> ASGIApp:
     clock = clock or SystemClock()
     metrics = Metrics()
     broker = Broker()
     metrics.gauge("uotp_sse_streams", lambda: float(broker.count()))
-    service = Service(Database(settings.database_file), settings, clock, broker, metrics)
+    service = Service(
+        Database(settings.database_file),
+        settings,
+        clock,
+        broker,
+        metrics,
+        alerts or Alerts(settings),
+    )
 
     app = FastAPI(
         title="UltimateOTP",

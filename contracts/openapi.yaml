@@ -4,7 +4,7 @@
 openapi: 3.1.0
 info:
   title: UltimateOTP sync API
-  version: 1.0.0
+  version: 1.1.0
   license:
     name: GPL-3.0-or-later
     identifier: GPL-3.0-or-later
@@ -12,9 +12,15 @@ info:
     The `/otp/v1` API of the UltimateOTP server: a dumb, versioned store of end-to-end encrypted blobs
     with device-key authentication and live change notifications (docs/design.md §4, docs/decisions.md).
 
-    **Contract version 1.0.0.** Breaking changes get a new path prefix (`/otp/v2`); within `/otp/v1` fields
-    are only added, never renamed or removed, and clients must ignore unknown response fields and unknown
-    SSE event types.
+    **Contract version 1.1.0.** Breaking changes get a new path prefix (`/otp/v2`); within `/otp/v1` fields
+    are only added, never renamed or removed, and clients must ignore unknown response fields, unknown
+    SSE event types and unknown values of `enrolled_via`.
+
+    Changes in 1.1.0 (owner decisions 6-13, "as close to Ente Auth as possible"), all additive:
+    password login from anywhere with an emailed code and SRP-6a (`/login/email-code`, `/srp/*`), optional
+    public sign-up (`/signup`, off by default), the SRP record in `KeyBundle.srp`, session metadata
+    (`/sessions`, `X-UOTP-App-Version`, `Device.app_version`), `email_code` on bootstrap enrollment, new
+    `enrolled_via` values `password` and `signup`, new problem codes.
 
     ## Conventions
     - JSON, UTF-8, `snake_case` field names.
@@ -57,14 +63,54 @@ info:
        headers as proof of possession of the new device key: `X-UOTP-Device` is the literal `pending` (or
        the pending `device_id` on `GET /otp/v1/pairings/{pairing_id}/result`) and the verifying key is the
        `ed25519_public_key` of the request body (or of the pairing).
-    3. **Anyone**: `GET /otp/v1/server-info` only.
+    3. **Anyone**: `GET /otp/v1/server-info`, and the password-login routes below, which carry their own
+       proofs (emailed code, SRP).
+
+    Any signed request may also carry `X-UOTP-App-Version` (1-64 printable ASCII characters, not signed):
+    the server keeps it, with the client address and the time, as session metadata (`GET /otp/v1/sessions`).
+
+    ## Password login from anywhere (SRP-6a + emailed code, decisions 6 and 13)
+    The account identifier is its email address (lower case). A new or reinstalled device:
+    1. `POST /otp/v1/srp/attributes {email}` -> `srp_user_id`, `srp_salt`, `password_kdf`, `email_code_required`.
+       Unknown addresses get deterministic decoy values, so this does not reveal who has an account.
+    2. If `email_code_required`: `POST /otp/v1/login/email-code {email}` (always 202). The 6-digit code is valid
+       10 minutes, works once, and allows 5 wrong tries.
+    3. Derives `KEK_pw` with Argon2id from `password_kdf` (crypto-format §4.1), then the **login subkey**
+       (crypto-format, SRP section; proposal: `crypto_kdf_derive_from_key(32, 1, "uotplogn", KEK_pw)`), which is
+       the SRP password `P`, never the KEK itself.
+    4. `POST /otp/v1/srp/session {email, srp_a, email_code}` -> `session_id`, `srp_b` (valid 5 minutes, single use).
+    5. `POST /otp/v1/srp/verify {session_id, srp_m1, device}` with the proof-of-possession headers of a new device
+       (`X-UOTP-Device: pending`) -> `srp_m2` (the client checks it: the server knew the verifier), the
+       registered device, the head and the key attributes (`password_wrap`, `password_kdf`, `recovery_wrap`). The
+       device then unwraps the vault key locally and signs every later request.
+
+    SRP-6a parameters: the RFC 5054 4096-bit group (the RFC 3526 prime, g = 5), H = SHA-256, `PAD(x)` = big-endian
+    left-padded to 512 bytes; `I` = the ASCII of `srp_user_id`, `s` = the salt bytes, `P` = the login subkey bytes.
+    ```
+    k = H(N | PAD(g))            x = H(s | H(I | ":" | P))      v = g^x mod N   (client, at setup)
+    A = g^a mod N                B = (k*v + g^b) mod N           u = H(PAD(A) | PAD(B)), refused when 0
+    S = (B - k*g^x)^(a + u*x)    K = H(PAD(S))
+    M1 = H((H(N) xor H(PAD(g))) | H(I) | s | PAD(A) | PAD(B) | K)          M2 = H(PAD(A) | M1 | K)
+    ```
+    `srp_a`, `srp_b` and `srp_verifier` travel as base64url of `PAD(value)` (512 bytes); `srp_m1`, `srp_m2` are 32
+    bytes. The client creates the SRP record (`KeyBundle.srp`: a random UUID `srp_user_id`, a random salt of 16+
+    bytes, the verifier) at bootstrap or sign-up and again on every password change; the server stores only
+    that. A key bundle without `password_wrap` removes the record (no password login).
+
+    Limits: per client address on every login route, per address and per destination on emails, and per
+    account: after 5 consecutive wrong SRP proofs the account refuses `/srp/session` for 60 s, doubling with
+    each further failure up to 24 h (`429 account_locked` with `retry_after`). Failures, lockouts and logins
+    are security events, and ntfy notifications go to the owner.
 
     ## Network policy
-    The enrollment surface (`POST /otp/v1/enroll`, `GET /otp/v1/recovery/keys`,
-    `POST /otp/v1/pairings/{pairing_id}/join`, `GET /otp/v1/pairings/{pairing_id}/result`) is **LAN-only by
-    default** (`UOTP_ENROLLMENT_SCOPE=lan`): callers outside `UOTP_LAN_NETWORKS` get `403
-    enrollment_network_denied`. The owner can switch it to `anywhere` without any API change
-    (docs/decisions.md item 4). Every other route works from anywhere.
+    - Enrollment tokens and pairing (`POST /otp/v1/enroll`, `GET /otp/v1/recovery/keys`,
+      `POST /otp/v1/pairings/{pairing_id}/join`, `GET /otp/v1/pairings/{pairing_id}/result`) are **LAN-only by
+      default** (`UOTP_PAIRING_SCOPE=lan`): callers outside `UOTP_LAN_NETWORKS` get `403
+      enrollment_network_denied`.
+    - Password login and sign-up (`/login/email-code`, `/srp/*`, `/signup`) work **from anywhere by default**
+      (`UOTP_ENROLLMENT_SCOPE=anywhere`, decision 6).
+    - Sign-up is off by default (`UOTP_SIGNUP=disabled`, `403 signup_disabled`): accounts come from the CLI.
+    - Every other route works from anywhere.
 
     ## Vault model, optimistic concurrency and anti-rollback
     One vault per account (`vault_id` = `account_id`). The server keeps a single monotonic `version` and a
@@ -99,6 +145,7 @@ servers:
 tags:
   - name: meta
   - name: enrollment
+  - name: login
   - name: account
   - name: devices
   - name: pairing
@@ -177,6 +224,139 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/login/email-code:
+    post:
+      tags: [login]
+      operationId: requestEmailCode
+      summary: Email a 6-digit login code (always 202, whether or not the address has an account)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EmailRequest'}
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Accepted'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/srp/attributes:
+    post:
+      tags: [login]
+      operationId: getSrpAttributes
+      summary: SRP identity, salt and Argon2id parameters of an account (decoys for unknown addresses)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EmailRequest'}
+      responses:
+        '200':
+          description: Attributes
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SrpAttributes'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/srp/session:
+    post:
+      tags: [login]
+      operationId: startSrpSession
+      summary: Check the emailed code (when required) and start an SRP handshake
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SrpSessionRequest'}
+      responses:
+        '200':
+          description: The server's public value
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SrpSession'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/srp/verify:
+    post:
+      tags: [login]
+      operationId: verifySrpSession
+      summary: Prove the password, register this device and receive the wrapped vault key
+      description: |
+        Signature headers with `X-UOTP-Device: pending`, verified with `device.ed25519_public_key`. A wrong
+        proof is `401 srp_failed` (counted toward the account lockout); the session is consumed either way.
+      security:
+        - pendingDeviceSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SrpVerifyRequest'}
+      responses:
+        '201':
+          description: Logged in; the device is registered
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SrpLoginResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/signup:
+    post:
+      tags: [login]
+      operationId: signup
+      summary: Create an account and its first device (only with UOTP_SIGNUP=enabled)
+      description: |
+        Needs the emailed code (request it with `/login/email-code`, which sends codes to new addresses only
+        when sign-up is enabled), the full key bundle with `srp`, and the proof-of-possession headers
+        (`X-UOTP-Device: pending`).
+      security:
+        - pendingDeviceSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SignupRequest'}
+      responses:
+        '201':
+          description: Account and device created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EnrollResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+
+  /otp/v1/sessions:
+    get:
+      tags: [devices]
+      operationId: listSessions
+      summary: Active sessions (device name, app version, last seen, last IP), like Ente's
+      description: Revoke any of them with `POST /otp/v1/devices/{device_id}/revoke`.
+      responses:
+        '200':
+          description: Sessions, most recently seen first
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SessionList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
 
   /otp/v1/enrollment-tokens:
     post:
@@ -598,12 +778,13 @@ components:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
     Unauthorized:
-      description: '`invalid_signature`, `stale_request`, `replayed_request`, `device_revoked`, `invalid_token`.'
+      description: '`invalid_signature`, `stale_request`, `replayed_request`, `device_revoked`, `invalid_token`,
+        `srp_failed`, `invalid_email_code`.'
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
     Forbidden:
-      description: '`enrollment_network_denied` (enrollment surface from outside the LAN) or `forbidden`.'
+      description: '`enrollment_network_denied` (route restricted to the LAN), `signup_disabled` or `forbidden`.'
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
@@ -613,7 +794,7 @@ components:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
     Conflict:
-      description: '`keys_exist`, `keys_revision_conflict`, `device_exists`, `pairing_state`.'
+      description: '`keys_exist`, `keys_revision_conflict`, `device_exists`, `pairing_state`, `email_taken`.'
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
@@ -635,7 +816,8 @@ components:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}
     RateLimited:
-      description: '`rate_limited`; `Retry-After` header (seconds) and `retry_after` field.'
+      description: '`rate_limited` or `account_locked` (SRP lockout); `Retry-After` header (seconds) and
+        `retry_after` field.'
       headers:
         Retry-After:
           schema: {type: integer}
@@ -715,6 +897,11 @@ components:
         password_wrap: {$ref: '#/components/schemas/WrapBlob'}
         password_kdf: {$ref: '#/components/schemas/WrapBlob'}
         recovery_wrap: {$ref: '#/components/schemas/WrapBlob'}
+        srp:
+          description: |
+            The SRP login record. Send it at bootstrap and with every password change; omitting it keeps the
+            stored one; a bundle without `password_wrap` deletes it.
+          $ref: '#/components/schemas/SrpSetup'
 
     EnrollRequest:
       type: object
@@ -725,6 +912,159 @@ components:
         x25519_public_key: {$ref: '#/components/schemas/X25519PublicKey'}
         label: {$ref: '#/components/schemas/Label'}
         keys: {$ref: '#/components/schemas/KeyBundle'}
+        app_version: {$ref: '#/components/schemas/AppVersion'}
+        email_code:
+          description: |
+            Bootstrap only, when the account's email is not verified yet: the code emailed by
+            `ultimateotp account-create` (or a new one from `/login/email-code`). Verifies the address once.
+          $ref: '#/components/schemas/EmailCode'
+
+    AppVersion:
+      type: string
+      pattern: '^[\x21-\x7e]{1,64}$'
+
+    Email:
+      type: string
+      maxLength: 254
+      description: Compared in lower case
+      example: owner@example.org
+
+    EmailCode:
+      type: string
+      pattern: '^[0-9]{6}$'
+
+    EmailRequest:
+      type: object
+      required: [email]
+      additionalProperties: false
+      properties:
+        email: {$ref: '#/components/schemas/Email'}
+
+    Accepted:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, enum: [accepted]}
+
+    SrpPublicValue:
+      type: string
+      description: PAD(value) for the 4096-bit group, 512 bytes, base64url
+      pattern: '^[A-Za-z0-9_-]{683}$'
+
+    SrpProof:
+      type: string
+      description: 32 bytes, base64url
+      pattern: '^[A-Za-z0-9_-]{43}$'
+
+    SrpSetup:
+      type: object
+      description: The SRP-6a login record, made by the client (decision 6). Stored as is.
+      required: [srp_user_id, srp_salt, srp_verifier]
+      additionalProperties: false
+      properties:
+        srp_user_id: {$ref: '#/components/schemas/ItemId'}
+        srp_salt:
+          type: string
+          description: 16 to 64 random bytes, base64url
+          pattern: '^[A-Za-z0-9_-]{22,86}$'
+        srp_verifier: {$ref: '#/components/schemas/SrpPublicValue'}
+
+    SrpAttributes:
+      type: object
+      required: [srp_user_id, srp_salt, password_kdf, email_code_required]
+      properties:
+        srp_user_id: {$ref: '#/components/schemas/ItemId'}
+        srp_salt: {$ref: '#/components/schemas/B64'}
+        password_kdf: {$ref: '#/components/schemas/WrapBlob'}
+        email_code_required: {type: boolean}
+
+    SrpSessionRequest:
+      type: object
+      required: [email, srp_a]
+      additionalProperties: false
+      properties:
+        email: {$ref: '#/components/schemas/Email'}
+        srp_a: {$ref: '#/components/schemas/SrpPublicValue'}
+        email_code: {$ref: '#/components/schemas/EmailCode'}
+
+    SrpSession:
+      type: object
+      required: [session_id, srp_b]
+      properties:
+        session_id: {type: string, pattern: '^srp_[A-Za-z0-9_-]{22}$'}
+        srp_b: {$ref: '#/components/schemas/SrpPublicValue'}
+
+    NewDevice:
+      type: object
+      required: [ed25519_public_key, x25519_public_key, label]
+      additionalProperties: false
+      properties:
+        ed25519_public_key: {$ref: '#/components/schemas/Ed25519PublicKey'}
+        x25519_public_key: {$ref: '#/components/schemas/X25519PublicKey'}
+        label: {$ref: '#/components/schemas/Label'}
+        app_version: {$ref: '#/components/schemas/AppVersion'}
+
+    SrpVerifyRequest:
+      type: object
+      required: [session_id, srp_m1, device]
+      additionalProperties: false
+      properties:
+        session_id: {type: string, pattern: '^srp_[A-Za-z0-9_-]{22}$'}
+        srp_m1: {$ref: '#/components/schemas/SrpProof'}
+        device: {$ref: '#/components/schemas/NewDevice'}
+
+    KeyAttributes:
+      type: object
+      required: [key_epoch, keys_revision, recovery_wrap]
+      properties:
+        key_epoch: {type: integer, minimum: 1}
+        keys_revision: {type: integer, minimum: 1}
+        password_wrap: {oneOf: [{$ref: '#/components/schemas/WrapBlob'}, {type: 'null'}]}
+        password_kdf: {oneOf: [{$ref: '#/components/schemas/WrapBlob'}, {type: 'null'}]}
+        recovery_wrap: {$ref: '#/components/schemas/WrapBlob'}
+
+    SrpLoginResponse:
+      type: object
+      required: [srp_m2, account_id, device, head, keys]
+      properties:
+        srp_m2: {$ref: '#/components/schemas/SrpProof'}
+        account_id: {$ref: '#/components/schemas/AccountIdValue'}
+        device: {$ref: '#/components/schemas/Device'}
+        head: {$ref: '#/components/schemas/VaultHead'}
+        keys: {$ref: '#/components/schemas/KeyAttributes'}
+
+    SignupRequest:
+      type: object
+      required: [email, device, keys]
+      additionalProperties: false
+      properties:
+        email: {$ref: '#/components/schemas/Email'}
+        email_code: {$ref: '#/components/schemas/EmailCode'}
+        device: {$ref: '#/components/schemas/NewDevice'}
+        keys: {$ref: '#/components/schemas/KeyBundle'}
+
+    Session:
+      type: object
+      required: [device_id, label, app_version, enrolled_via, created_at, last_seen_at, last_ip, revoked_at,
+                 current]
+      properties:
+        device_id: {$ref: '#/components/schemas/DeviceIdValue'}
+        label: {$ref: '#/components/schemas/Label'}
+        app_version: {oneOf: [{$ref: '#/components/schemas/AppVersion'}, {type: 'null'}]}
+        enrolled_via: {type: string}
+        created_at: {type: integer}
+        last_seen_at: {oneOf: [{type: integer}, {type: 'null'}]}
+        last_ip: {oneOf: [{type: string}, {type: 'null'}]}
+        revoked_at: {oneOf: [{type: integer}, {type: 'null'}]}
+        current: {type: boolean, description: This is the calling device}
+
+    SessionList:
+      type: object
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          items: {$ref: '#/components/schemas/Session'}
 
     EnrollResponse:
       type: object
@@ -790,6 +1130,7 @@ components:
         password_wrap: {$ref: '#/components/schemas/WrapBlob'}
         password_kdf: {$ref: '#/components/schemas/WrapBlob'}
         recovery_wrap: {$ref: '#/components/schemas/WrapBlob'}
+        srp: {$ref: '#/components/schemas/SrpSetup'}
 
     Device:
       type: object
@@ -802,9 +1143,9 @@ components:
         x25519_public_key: {$ref: '#/components/schemas/X25519PublicKey'}
         enrolled_via:
           type: string
-          enum: [bootstrap, token, pairing]
-          description: '`bootstrap` and `token` devices enrolled themselves (password or recovery key); clients
-            should flag them, since no other device vouched for them.'
+          enum: [bootstrap, token, pairing, password, signup]
+          description: '`bootstrap`, `token`, `password` and `signup` devices enrolled themselves (password or
+            recovery key); clients should flag them, since no other device vouched for them.'
         added_by:
           oneOf: [{$ref: '#/components/schemas/DeviceIdValue'}, {type: 'null'}]
         added_by_signature:
@@ -816,6 +1157,7 @@ components:
         created_at: {type: integer}
         last_seen_at: {oneOf: [{type: integer}, {type: 'null'}]}
         revoked_at: {oneOf: [{type: integer}, {type: 'null'}]}
+        app_version: {oneOf: [{$ref: '#/components/schemas/AppVersion'}, {type: 'null'}]}
 
     DeviceList:
       type: object
@@ -1043,7 +1385,8 @@ components:
                  incomplete_rotation, invalid_signature, stale_request, replayed_request, device_revoked,
                  invalid_token, enrollment_network_denied, forbidden, not_found, keys_exist,
                  keys_revision_conflict, device_exists, pairing_state, version_conflict, key_epoch_conflict,
-                 pairing_expired, body_too_large, rate_limited, internal_error]
+                 pairing_expired, body_too_large, rate_limited, internal_error, srp_failed,
+                 invalid_email_code, account_locked, signup_disabled, email_taken]
         server_time: {type: integer, description: 'On `stale_request`: the server clock (Unix seconds)'}
         head:
           description: On `version_conflict` and `key_epoch_conflict`

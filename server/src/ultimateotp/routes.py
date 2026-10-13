@@ -16,8 +16,10 @@ from ultimateotp import API_VERSION, db
 from ultimateotp.auth import (
     auth_failed,
     bearer,
+    client_key,
     device_auth,
-    enrollment_gate,
+    login_gate,
+    pairing_gate,
     rate_limit,
     service_of,
     signed_request,
@@ -28,10 +30,15 @@ from ultimateotp.forwarded import from_networks
 from ultimateotp.models import (
     ApproveRequest,
     CommitRequest,
+    EmailCodeRequest,
     EnrollRequest,
     JoinRequest,
     PutKeysRequest,
     RotateRequest,
+    SignupRequest,
+    SrpAttributesRequest,
+    SrpSessionRequest,
+    SrpVerifyRequest,
 )
 from ultimateotp.service import DeviceAuth, Service, SignedRequest
 from ultimateotp.settings import Settings
@@ -40,7 +47,8 @@ router = APIRouter(prefix="/otp/v1")
 
 Auth = Annotated[DeviceAuth, Depends(device_auth)]
 Signed = Annotated[SignedRequest, Depends(signed_request)]
-EnrollmentGate = Depends(enrollment_gate)
+EnrollmentGate = Depends(pairing_gate)
+LoginGate = Depends(login_gate)
 
 
 def _pending(request: Request, call: Callable[[], dict[str, Any]]) -> dict[str, Any]:
@@ -71,6 +79,46 @@ def enroll(request: Request, body: EnrollRequest, signed: Signed) -> dict[str, A
 def recovery_keys(request: Request) -> dict[str, Any]:
     service = service_of(request)
     return _pending(request, lambda: service.recovery_keys(bearer(request)))
+
+
+# ---------------------------------------------------------------- password login (decisions 6, 13)
+
+
+@router.post("/login/email-code", status_code=202, dependencies=[LoginGate])
+def request_email_code(request: Request, body: EmailCodeRequest) -> dict[str, Any]:
+    """Always 202: whether the address has an account is never revealed."""
+    rate_limit(request, "email_ip", client_key(request))
+    rate_limit(request, "email_address", body.email)
+    service_of(request).login.request_code(body.email, client_key(request))
+    return {"status": "accepted"}
+
+
+@router.post("/srp/attributes", dependencies=[LoginGate])
+def srp_attributes(request: Request, body: SrpAttributesRequest) -> dict[str, Any]:
+    return service_of(request).login.attributes(body.email)
+
+
+@router.post("/srp/session", dependencies=[LoginGate])
+def srp_session(request: Request, body: SrpSessionRequest) -> dict[str, Any]:
+    service = service_of(request)
+    return _pending(request, lambda: service.login.start(body, client_key(request)))
+
+
+@router.post("/srp/verify", status_code=201, dependencies=[LoginGate])
+def srp_verify(request: Request, body: SrpVerifyRequest, signed: Signed) -> dict[str, Any]:
+    service = service_of(request)
+    return _pending(request, lambda: service.login.verify(body, signed))
+
+
+@router.post("/signup", status_code=201, dependencies=[LoginGate])
+def signup(request: Request, body: SignupRequest, signed: Signed) -> dict[str, Any]:
+    service = service_of(request)
+    return _pending(request, lambda: service.login.signup(body, signed))
+
+
+@router.get("/sessions")
+def sessions(request: Request, auth: Auth) -> dict[str, Any]:
+    return service_of(request).sessions(auth)
 
 
 @router.post("/enrollment-tokens", status_code=201)
