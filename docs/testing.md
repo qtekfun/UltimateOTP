@@ -241,3 +241,8 @@ counted, because it needs `uv` and `check` must not.
 Kover line coverage is the measure used for the floors; branch coverage is lower (`core:sync` 49 %,
 `core:vault` 52 %, `app` 25 %) and is in `koverHtmlReport`. A floor says the number cannot fall, not
 that the covered lines are well asserted.
+
+After the KB-3 fix (`fix/keystore-auth`, integrated with `feat/show-password`): Android JVM tests 255
+(251 run, 4 disabled known bugs: KB-1, KB-4, KB-5 twice for the two window sizes). The fix added 16:
+`ExpiredAuthenticationTest` 4 to 15 (its three disabled KB-3 tests now run), `PreflightTest` 4
+(engine: no request while secrets cannot be stored), `VaultRepositoryTest` 1. Contract test: 7 run.
