@@ -1,0 +1,5 @@
+Subject: UltimateOTP: se han exportado los datos de tu cuenta
+
+Los datos cifrados de tu cuenta de UltimateOTP se han exportado desde "$device". El archivo no sirve de nada sin tu contraseña o tu clave de recuperación.
+
+Si no has sido tú, cierra en "Sesiones activas" los dispositivos que no reconozcas y cambia tu contraseña.
