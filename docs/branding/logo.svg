@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2026 UltimateOTP contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- UltimateOTP mark: a countdown ring with a gap and a hand. Original artwork.
+     Same geometry as android/app/src/main/res/drawable/ic_launcher_foreground.xml (108 x 108 viewport). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="512" height="512">
+  <defs>
+    <linearGradient id="ring" gradientUnits="userSpaceOnUse" x1="32" y1="32" x2="76" y2="76">
+      <stop offset="0" stop-color="#1FB86A"/>
+      <stop offset="1" stop-color="#8CF0B4"/>
+    </linearGradient>
+    <linearGradient id="bg" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="108" y2="108">
+      <stop offset="0" stop-color="#17241C"/>
+      <stop offset="1" stop-color="#0B100D"/>
+    </linearGradient>
+  </defs>
+  <!-- Background layer of the adaptive icon (store graphics may crop it to a circle or rounded square). -->
+  <rect width="108" height="108" fill="url(#bg)"/>
+  <path d="M75.67 50.18A22 22 0 1 1 57.82 32.33" fill="none" stroke="url(#ring)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M54 54L63.2 44.8" fill="none" stroke="#8CF0B4" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="54" cy="54" r="5.5" fill="#E6EAF0"/>
+</svg>
