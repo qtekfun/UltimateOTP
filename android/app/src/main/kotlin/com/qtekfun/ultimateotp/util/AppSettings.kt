@@ -19,6 +19,9 @@ import javax.inject.Singleton
 
 private val Context.dataStore by preferencesDataStore("settings")
 
+/** How the app picks light or dark. */
+enum class ThemeMode { SYSTEM, LIGHT, DARK }
+
 /** Non-secret preferences. */
 data class Settings(
     /** Seconds in the background before the vault locks; 0 = at once. */
@@ -30,6 +33,15 @@ data class Settings(
     val enrollmentUrl: String = "",
     /** Allow enrollment through [serverUrl] even if it is not a LAN address. Off by default. */
     val allowRemoteEnrollment: Boolean = false,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    /** True black background in the dark theme (OLED). */
+    val amoled: Boolean = false,
+    /** Wallpaper colours on Android 12+; off by default. */
+    val dynamicColor: Boolean = false,
+    /** Codes as a grid of compact cards instead of a list. */
+    val gridLayout: Boolean = false,
+    /** Codes are shown as dots until the account is tapped. Off by default: codes are visible when unlocked. */
+    val hideCodes: Boolean = false,
 )
 
 @Singleton
@@ -43,6 +55,11 @@ class AppSettings
         private val server = stringPreferencesKey("server_url")
         private val enroll = stringPreferencesKey("enrollment_url")
         private val remote = booleanPreferencesKey("allow_remote_enrollment")
+        private val themeMode = stringPreferencesKey("theme_mode")
+        private val amoled = booleanPreferencesKey("amoled")
+        private val dynamic = booleanPreferencesKey("dynamic_color")
+        private val grid = booleanPreferencesKey("grid_layout")
+        private val hide = booleanPreferencesKey("hide_codes")
 
         val settings: Flow<Settings> = context.dataStore.data.map { it.toSettings() }
 
@@ -55,6 +72,11 @@ class AppSettings
                 serverUrl = this[server].orEmpty(),
                 enrollmentUrl = this[enroll].orEmpty(),
                 allowRemoteEnrollment = this[remote] ?: false,
+                themeMode = ThemeMode.entries.firstOrNull { it.name == this[themeMode] } ?: ThemeMode.SYSTEM,
+                amoled = this[amoled] ?: false,
+                dynamicColor = this[dynamic] ?: false,
+                gridLayout = this[grid] ?: false,
+                hideCodes = this[hide] ?: false,
             )
 
         suspend fun update(transform: (Settings) -> Settings) {
@@ -65,6 +87,11 @@ class AppSettings
                 prefs[server] = next.serverUrl
                 prefs[enroll] = next.enrollmentUrl
                 prefs[remote] = next.allowRemoteEnrollment
+                prefs[themeMode] = next.themeMode.name
+                prefs[amoled] = next.amoled
+                prefs[dynamic] = next.dynamicColor
+                prefs[grid] = next.gridLayout
+                prefs[hide] = next.hideCodes
             }
         }
     }

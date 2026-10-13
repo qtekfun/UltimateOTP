@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 UltimateOTP contributors -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The in-app logo: the mark of the launcher icon, cropped to its bounds, transparent background. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="52"
+    android:viewportHeight="52">
+    <group android:translateX="-28" android:translateY="-28">
+        <path
+            android:pathData="M75.67,50.18A22,22 0,1 1,57.82 32.33"
+            android:strokeWidth="7"
+            android:strokeLineCap="round">
+            <aapt:attr name="android:strokeColor">
+                <gradient
+                    android:startX="32"
+                    android:startY="32"
+                    android:endX="76"
+                    android:endY="76"
+                    android:type="linear">
+                    <item android:color="#FF1FB86A" android:offset="0.0" />
+                    <item android:color="#FF8CF0B4" android:offset="1.0" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path
+            android:pathData="M54,54L63.2,44.8"
+            android:strokeColor="#FF8CF0B4"
+            android:strokeWidth="5"
+            android:strokeLineCap="round" />
+        <path
+            android:fillColor="#FFE6EAF0"
+            android:pathData="M54,54m-5.5,0a5.5,5.5 0,1 1,11 0a5.5,5.5 0,1 1,-11 0" />
+    </group>
+</vector>

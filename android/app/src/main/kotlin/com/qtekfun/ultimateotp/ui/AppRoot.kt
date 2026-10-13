@@ -3,6 +3,11 @@
 
 package com.qtekfun.ultimateotp.ui
 
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -24,12 +29,14 @@ import com.qtekfun.ultimateotp.features.AccountScreen
 import com.qtekfun.ultimateotp.features.AutofillAssociationsScreen
 import com.qtekfun.ultimateotp.features.TrashScreen
 import com.qtekfun.ultimateotp.ui.add.AddScreen
+import com.qtekfun.ultimateotp.ui.codes.AddMode
 import com.qtekfun.ultimateotp.ui.codes.CodesScreen
 import com.qtekfun.ultimateotp.ui.edit.EditScreen
 import com.qtekfun.ultimateotp.ui.lock.LockScreen
 import com.qtekfun.ultimateotp.ui.lock.WelcomeScreen
 import com.qtekfun.ultimateotp.ui.settings.SettingsScreen
 import com.qtekfun.ultimateotp.ui.sync.LoginScreen
+import com.qtekfun.ultimateotp.ui.sync.SessionsScreen
 import com.qtekfun.ultimateotp.ui.sync.SignupScreen
 import com.qtekfun.ultimateotp.ui.sync.SyncScreen
 import com.qtekfun.ultimateotp.ui.sync.deviceLabel
@@ -102,6 +109,8 @@ fun AppRoot(
     AuthHost(model.gate, authenticate)
 }
 
+private const val NAV_MS = 280
+
 @Composable
 private fun Unlocked(
     pendingLink: MutableStateFlow<String?>,
@@ -133,30 +142,44 @@ private fun Unlocked(
         val l = link ?: return@LaunchedEffect
         pendingLink.value = null
         when {
-            l.startsWith("otpauth", ignoreCase = true) -> nav.navigate("add?link=${android.net.Uri.encode(l)}")
+            l.startsWith("otpauth", ignoreCase = true) -> nav.navigate("add?link=${android.net.Uri.encode(l)}&mode=MANUAL")
             l.startsWith("uotp://", ignoreCase = true) -> nav.navigate("sync?link=${android.net.Uri.encode(l)}")
         }
     }
-    NavHost(navController = nav, startDestination = "codes") {
+    NavHost(
+        navController = nav,
+        startDestination = "codes",
+        enterTransition = { slideInHorizontally(animationSpec = tween(NAV_MS), initialOffsetX = { it / 6 }) + fadeIn(tween(NAV_MS)) },
+        exitTransition = { fadeOut(tween(NAV_MS / 2)) },
+        popEnterTransition = { fadeIn(tween(NAV_MS)) },
+        popExitTransition = { slideOutHorizontally(animationSpec = tween(NAV_MS), targetOffsetX = { it / 6 }) + fadeOut(tween(NAV_MS)) },
+    ) {
         composable("codes") {
             CodesScreen(
-                onAdd = { nav.navigate("add?link=") },
+                onAdd = { mode -> nav.navigate("add?link=&mode=${mode.name}") },
                 onEdit = { id -> nav.navigate("edit/$id") },
                 onSettings = { nav.navigate("settings") },
+                onSync = { nav.navigate("sync?link=") },
+                onTrash = { nav.navigate("trash") },
             )
         }
         composable(
-            "add?link={link}",
+            "add?link={link}&mode={mode}",
             arguments =
                 listOf(
                     navArgument("link") {
                         type = NavType.StringType
                         defaultValue = ""
                     },
+                    navArgument("mode") {
+                        type = NavType.StringType
+                        defaultValue = AddMode.SCAN.name
+                    },
                 ),
         ) {
             AddScreen(
                 initialLink = it.arguments?.getString("link").orEmpty(),
+                initialMode = AddMode.entries.firstOrNull { m -> m.name == it.arguments?.getString("mode") } ?: AddMode.SCAN,
                 onDone = { nav.popBackStack() },
                 onSyncLink = { l -> nav.navigate("sync?link=${android.net.Uri.encode(l)}") },
             )
@@ -166,6 +189,7 @@ private fun Unlocked(
             SettingsScreen(
                 onBack = { nav.popBackStack() },
                 onSync = { nav.navigate("sync?link=") },
+                onSessions = { nav.navigate("sessions") },
                 onTrash = { nav.navigate("trash") },
                 onAccount = { nav.navigate("account") },
                 onAutofillAssociations = { nav.navigate("autofill-associations") },
@@ -174,6 +198,7 @@ private fun Unlocked(
         composable("trash") { TrashScreen(onBack = { nav.popBackStack() }) }
         composable("account") { AccountScreen(onBack = { nav.popBackStack() }) }
         composable("autofill-associations") { AutofillAssociationsScreen(onBack = { nav.popBackStack() }) }
+        composable("sessions") { SessionsScreen(onBack = { nav.popBackStack() }) }
         composable(
             "sync?link={link}",
             arguments =
@@ -189,6 +214,7 @@ private fun Unlocked(
                 onBack = { nav.popBackStack() },
                 onLogin = { nav.navigate("login") },
                 onSignup = { nav.navigate("signup") },
+                onSessions = { nav.navigate("sessions") },
             )
         }
         composable("login") { LoginScreen(defaultServer = "", label = deviceLabel(), onBack = { nav.popBackStack() }) }

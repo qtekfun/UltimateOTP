@@ -3,48 +3,22 @@
 
 package com.qtekfun.ultimateotp.ui.codes
 
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -52,14 +26,21 @@ import com.qtekfun.ultimateotp.R
 import com.qtekfun.ultimateotp.auth.AuthGate
 import com.qtekfun.ultimateotp.auth.GateResult
 import com.qtekfun.ultimateotp.core.otp.OtpGenerator
-import com.qtekfun.ultimateotp.core.otp.OtpType
+import com.qtekfun.ultimateotp.core.sync.SyncResult
 import com.qtekfun.ultimateotp.core.sync.model.VaultItem
 import com.qtekfun.ultimateotp.core.vault.VaultRepository
+import com.qtekfun.ultimateotp.features.EntryOrderViewModel
+import com.qtekfun.ultimateotp.sync.SyncController
+import com.qtekfun.ultimateotp.sync.SyncStatus
+import com.qtekfun.ultimateotp.ui.components.currentWidthClass
+import com.qtekfun.ultimateotp.util.AppSettings
 import com.qtekfun.ultimateotp.util.SecureClipboard
+import com.qtekfun.ultimateotp.util.Settings
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -71,9 +52,14 @@ class CodesViewModel
     constructor(
         private val vault: VaultRepository,
         private val clipboard: SecureClipboard,
+        private val appSettings: AppSettings,
+        private val sync: SyncController,
         private val gate: AuthGate,
     ) : ViewModel() {
         val items: StateFlow<List<VaultItem>> = vault.items.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_MS), emptyList())
+        val settings: StateFlow<Settings> = appSettings.settings.stateIn(viewModelScope, SharingStarted.Eagerly, Settings())
+        val syncIndicator: StateFlow<SyncIndicator> =
+            sync.status.map(::indicator).stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_MS), SyncIndicator.LOCAL)
 
         fun copy(code: String) = clipboard.copy(code)
 
@@ -84,113 +70,163 @@ class CodesViewModel
                 clipboard.copy(OtpGenerator.code(item.otp, System.currentTimeMillis()))
             }
 
+        fun setGrid(grid: Boolean) = viewModelScope.launch { appSettings.update { it.copy(gridLayout = grid) } }
+
+        fun togglePin(item: VaultItem) = viewModelScope.launch { vault.update(item.copy(favorite = !item.favorite)) }
+
+        fun setTags(
+            item: VaultItem,
+            tags: List<String>,
+        ) = viewModelScope.launch { vault.update(item.copy(otp = item.otp.copy(tags = tags))) }
+
+        /** The app lock: forgets the keys now; the lock screen follows. */
+        fun lock() = vault.lock()
+
+        fun syncNow() = sync.syncNow()
+
         private companion object {
             const val STOP_MS = 5_000L
+
+            fun indicator(status: SyncStatus): SyncIndicator =
+                when {
+                    status.account == null -> SyncIndicator.LOCAL
+                    status.running -> SyncIndicator.SYNCING
+                    status.offline -> SyncIndicator.OFFLINE
+                    status.last is SyncResult.Rejected || status.last == SyncResult.Revoked -> SyncIndicator.PROBLEM
+                    else -> SyncIndicator.SYNCED
+                }
         }
     }
 
-/** Groups a code for reading: `123 456`, `1234 5678`. */
-fun formatCode(code: String): String = if (code.length < GROUP_MIN) code else code.chunked((code.length + 1) / 2).joinToString(" ")
-
-private const val GROUP_MIN = 6
 private const val TICK_MS = 1_000L
+private const val COPIED_MS = 1_600L
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** The main screen: the stateful part. [CodesContent] draws it and is what the screenshots render. */
 @Composable
 fun CodesScreen(
-    onAdd: () -> Unit,
+    onAdd: (AddMode) -> Unit,
     onEdit: (UUID) -> Unit,
     onSettings: () -> Unit,
+    onSync: () -> Unit,
+    onTrash: () -> Unit,
     model: CodesViewModel = hiltViewModel(),
+    order: EntryOrderViewModel = hiltViewModel(),
 ) {
     val items by model.items.collectAsState()
-    var query by remember { mutableStateOf("") }
+    val settings by model.settings.collectAsState()
+    val sync by model.syncIndicator.collectAsState()
+    var query by rememberSaveable { mutableStateOf("") }
+    var searching by rememberSaveable { mutableStateOf(false) }
+    var tag by rememberSaveable { mutableStateOf<String?>(null) }
+    var addSheet by rememberSaveable { mutableStateOf(false) }
+    var menuId by rememberSaveable { mutableStateOf<String?>(null) }
+    var tagsId by rememberSaveable { mutableStateOf<String?>(null) }
+    var deleteId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
+    var copiedId by remember { mutableStateOf<UUID?>(null) }
+    var revealedId by remember { mutableStateOf<UUID?>(null) }
+    val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    val copied = stringResource(R.string.code_copied)
+    val trashedText = stringResource(R.string.moved_to_trash)
+    val undoText = stringResource(R.string.undo)
     val now by produceState(System.currentTimeMillis()) {
         while (true) {
             value = System.currentTimeMillis()
             delay(TICK_MS - value % TICK_MS)
         }
     }
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.app_name)) },
-                actions = {
-                    IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, stringResource(R.string.settings)) }
-                },
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = onAdd) { Icon(Icons.Default.Add, stringResource(R.string.add_account)) }
-        },
-        snackbarHost = { SnackbarHost(snackbar) },
-    ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                label = { Text(stringResource(R.string.search)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-            val shown =
-                items.filter {
-                    query.isBlank() || it.otp.issuer.contains(query, true) || it.otp.label.contains(query, true) ||
-                        it.otp.tags.any { t -> t.contains(query, true) }
-                }
-            if (items.isEmpty()) {
-                Text(stringResource(R.string.empty_vault), modifier = Modifier.padding(24.dp))
-            }
-            LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(shown, key = { it.id }) { item ->
-                    CodeCard(
-                        item = item,
-                        now = now,
-                        onCopy = { code ->
-                            model.copy(code)
-                            scope.launch { snackbar.showSnackbar(copied) }
-                        },
-                        onNext = { model.nextHotp(item.id) },
-                        onEdit = { onEdit(item.id) },
-                    )
-                }
-            }
+    LaunchedEffect(copiedId) {
+        if (copiedId != null) {
+            delay(COPIED_MS)
+            copiedId = null
         }
     }
-}
 
-@Composable
-private fun CodeCard(
-    item: VaultItem,
-    now: Long,
-    onCopy: (String) -> Unit,
-    onNext: () -> Unit,
-    onEdit: () -> Unit,
-) {
-    val otp = item.otp
-    val code = OtpGenerator.code(otp, now)
-    Card(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = { onCopy(code) }, onLongClick = onEdit)) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (item.favorite) Icon(Icons.Default.Star, null, Modifier.size(16.dp))
-                    Text(otp.issuer.ifEmpty { otp.label }, style = MaterialTheme.typography.titleMedium)
-                }
-                if (otp.issuer.isNotEmpty()) Text(otp.label, style = MaterialTheme.typography.bodySmall)
-                Text(formatCode(code), style = MaterialTheme.typography.headlineMedium, fontFamily = FontFamily.Monospace)
-            }
-            if (otp.type == OtpType.HOTP) {
-                IconButton(onClick = onNext) { Icon(Icons.Default.Refresh, stringResource(R.string.next_code)) }
-            } else {
-                val remaining = OtpGenerator.millisUntilNextStep(now, otp.period)
-                CircularProgressIndicator(
-                    progress = { remaining / (otp.period * TICK_MS.toFloat()) },
-                    modifier = Modifier.size(28.dp),
-                )
-            }
+    fun find(id: String?): VaultItem? = id?.let { s -> items.firstOrNull { it.id.toString() == s } }
+    val ui =
+        CodesUi(
+            query = query,
+            searching = searching,
+            tag = tag,
+            grid = settings.gridLayout,
+            addSheet = addSheet,
+            menuId = find(menuId)?.id,
+            tagsId = find(tagsId)?.id,
+            deleteId = find(deleteId)?.id,
+            selectedId = find(selectedId)?.id,
+            copiedId = copiedId,
+            hideCodes = settings.hideCodes,
+            revealedId = revealedId,
+            sync = sync,
+        )
+    val actions =
+        remember(model, order, onAdd, onEdit, onSettings, onSync, onTrash, trashedText, undoText) {
+            CodesActions(
+                onQuery = { query = it },
+                onSearching = {
+                    searching = it
+                    if (!it) query = ""
+                },
+                onTag = { tag = it },
+                onToggleGrid = { model.setGrid(!model.settings.value.gridLayout) },
+                onAddSheet = { addSheet = it },
+                onAdd = {
+                    addSheet = false
+                    onAdd(it)
+                },
+                onMenu = {
+                    menuId = it?.toString()
+                    if (it != null) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                },
+                onTagsDialog = { tagsId = it?.toString() },
+                onDeleteDialog = { deleteId = it?.toString() },
+                onSelect = { selectedId = it.toString() },
+                onCopy = { item, code ->
+                    model.copy(code)
+                    copiedId = item.id
+                    selectedId = item.id.toString()
+                    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                },
+                onNext = {
+                    model.nextHotp(it.id)
+                    copiedId = it.id
+                    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                },
+                onEdit = {
+                    menuId = null
+                    onEdit(it)
+                },
+                onTogglePin = {
+                    menuId = null
+                    model.togglePin(it)
+                },
+                onSetTags = { item, tags ->
+                    tagsId = null
+                    model.setTags(item, tags)
+                },
+                onDelete = {
+                    deleteId = null
+                    menuId = null
+                    order.delete(it.id)
+                    scope.launch {
+                        snackbar.currentSnackbarData?.dismiss()
+                        val result = snackbar.showSnackbar(trashedText, actionLabel = undoText, duration = SnackbarDuration.Long)
+                        if (result == SnackbarResult.ActionPerformed) order.undoDelete(it.id)
+                    }
+                },
+                onTrash = onTrash,
+                onReorder = { from, to ->
+                    val shown = order.entries.value
+                    val a = shown.indexOfFirst { it.id == from }
+                    val b = shown.indexOfFirst { it.id == to }
+                    if (a >= 0 && b >= 0) order.move(a, b)
+                },
+                onSettings = onSettings,
+                onSync = onSync,
+                onLock = model::lock,
+                onReveal = { revealedId = it },
+            )
         }
-    }
+    CodesContent(items = items, now = now, ui = ui, on = actions, widthClass = currentWidthClass(), snackbar = snackbar)
 }

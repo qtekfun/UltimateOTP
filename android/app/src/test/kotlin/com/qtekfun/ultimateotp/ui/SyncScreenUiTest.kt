@@ -62,6 +62,7 @@ class SyncScreenUiTest(
                 onBack = { calls += "back" },
                 onLogin = { calls += "login" },
                 onSignup = { calls += "signup" },
+                onSessions = { calls += "sessions" },
                 model = model,
             )
         }

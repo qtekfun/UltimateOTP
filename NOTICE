@@ -1,0 +1,21 @@
+UltimateOTP
+Copyright 2026 UltimateOTP contributors. Licensed under GPL-3.0-or-later (see LICENSE).
+
+Third-party material bundled in the Android app
+===============================================
+
+Brand icons (android/app/src/main/res/drawable/si_*.xml)
+  Simple Icons, https://github.com/simple-icons/simple-icons, version 16.35.0
+  Licence: CC0 1.0 Universal (public domain dedication).
+  The icons are converted to Android vector drawables by tools/icons/build_icon_pack.py.
+  The brand marks themselves are trademarks of their respective owners; they are shown only to
+  identify the service an account belongs to. See docs/icons.md.
+
+JetBrains Mono (android/app/src/main/res/font/jetbrains_mono.ttf)
+  Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
+  Licence: SIL Open Font License 1.1, text in third_party/jetbrains-mono/OFL.txt.
+  Used for one-time codes and recovery words.
+
+Libraries
+  Dependencies are listed with their licences by `./gradlew licensee` (Apache-2.0, MIT, BSD-3-Clause,
+  MPL-2.0, ISC, LGPL-2.1-or-later only; anything else fails the build).

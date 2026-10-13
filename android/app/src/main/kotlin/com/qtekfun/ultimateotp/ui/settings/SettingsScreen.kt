@@ -5,50 +5,48 @@ package com.qtekfun.ultimateotp.ui.settings
 
 import android.app.ActivityManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.qtekfun.ultimateotp.BuildConfig
 import com.qtekfun.ultimateotp.R
 import com.qtekfun.ultimateotp.core.crypto.PasswordKdf
 import com.qtekfun.ultimateotp.core.vault.ImportOutcome
 import com.qtekfun.ultimateotp.core.vault.VaultTransfer
-import com.qtekfun.ultimateotp.features.FeatureSettingsSection
+import com.qtekfun.ultimateotp.features.FeatureSettingsViewModel
 import com.qtekfun.ultimateotp.ui.components.PasswordField
+import com.qtekfun.ultimateotp.ui.components.rememberRetainedText
+import com.qtekfun.ultimateotp.util.AppLanguage
 import com.qtekfun.ultimateotp.util.AppSettings
 import com.qtekfun.ultimateotp.util.Settings
+import com.qtekfun.ultimateotp.util.ThemeMode
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +57,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
+import android.provider.Settings as AndroidSettings
 
 /** One-line status of the last export or import. */
 sealed interface TransferStatus {
@@ -97,6 +96,18 @@ class SettingsViewModel
         private var pendingImport: Uri? = null
 
         fun setLockTimeout(seconds: Int) = viewModelScope.launch { appSettings.update { it.copy(lockTimeoutSeconds = seconds) } }
+
+        fun setClipboardClear(seconds: Int) = viewModelScope.launch { appSettings.update { it.copy(clipboardClearSeconds = seconds) } }
+
+        fun setThemeMode(mode: ThemeMode) = viewModelScope.launch { appSettings.update { it.copy(themeMode = mode) } }
+
+        fun setAmoled(on: Boolean) = viewModelScope.launch { appSettings.update { it.copy(amoled = on) } }
+
+        fun setDynamicColor(on: Boolean) = viewModelScope.launch { appSettings.update { it.copy(dynamicColor = on) } }
+
+        fun setGridLayout(on: Boolean) = viewModelScope.launch { appSettings.update { it.copy(gridLayout = on) } }
+
+        fun setHideCodes(on: Boolean) = viewModelScope.launch { appSettings.update { it.copy(hideCodes = on) } }
 
         /** Argon2id starts at the rung that fits in free memory (crypto-format.md §4.1). */
         private fun ladder(): List<Pair<Long, Long>> {
@@ -169,21 +180,24 @@ class SettingsViewModel
             }
     }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
     onSync: () -> Unit,
-    onTrash: () -> Unit = {},
-    onAccount: () -> Unit = {},
-    onAutofillAssociations: () -> Unit = {},
+    onSessions: () -> Unit,
+    onTrash: () -> Unit,
+    onAccount: () -> Unit,
+    onAutofillAssociations: () -> Unit,
     model: SettingsViewModel = hiltViewModel(),
+    features: FeatureSettingsViewModel = hiltViewModel(),
 ) {
     val settings by model.settings.collectAsState()
     val status by model.status.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var language by remember { mutableStateOf(AppLanguage.current(context)) }
     var exportPassword by remember { mutableStateOf<String?>(null) }
-    var askExportPassword by remember { mutableStateOf(false) }
-    var confirmPlain by remember { mutableStateOf(false) }
+    var askExportPassword by rememberSaveable { mutableStateOf(false) }
+    var confirmPlain by rememberSaveable { mutableStateOf(false) }
     val encryptedTarget =
         rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
             val pw = exportPassword
@@ -198,44 +212,53 @@ fun SettingsScreen(
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) model.import(uri, null)
         }
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.settings)) },
-                navigationIcon = {
-                    IconButton(
-                        onClick = onBack,
-                    ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
+    val saveLog =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri -> uri?.let(features::saveLog) }
+    SettingsContent(
+        settings = settings,
+        statusText = status?.let { statusText(it) },
+        version = BuildConfig.VERSION_NAME,
+        language = language,
+        actions =
+            SettingsActions(
+                onBack = onBack,
+                onSync = onSync,
+                onSessions = onSessions,
+                onLockTimeout = { model.setLockTimeout(it) },
+                onClipboardClear = { model.setClipboardClear(it) },
+                onHideCodes = { model.setHideCodes(it) },
+                onThemeMode = { model.setThemeMode(it) },
+                onAmoled = { model.setAmoled(it) },
+                onDynamicColor = { model.setDynamicColor(it) },
+                onGridLayout = { model.setGridLayout(it) },
+                onLanguage = { tag ->
+                    language = tag
+                    (context as? android.app.Activity)?.let { AppLanguage.set(it, tag) }
                 },
-            )
-        },
-    ) { padding ->
-        Column(
-            Modifier.padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(stringResource(R.string.section_security), style = MaterialTheme.typography.titleMedium)
-            // Lock timeout, autofill, trash, account and error log: features/FeatureSettings.kt.
-            FeatureSettingsSection(onTrash, onAccount, onAutofillAssociations)
-            HorizontalDivider()
-            Text(stringResource(R.string.section_backup), style = MaterialTheme.typography.titleMedium)
-            Button(
-                onClick = { askExportPassword = true },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(stringResource(R.string.export_encrypted)) }
-            OutlinedButton(
-                onClick = { confirmPlain = true },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(stringResource(R.string.export_plain)) }
-            OutlinedButton(onClick = { importSource.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.import_file))
-            }
-            status?.let { Text(statusText(it)) }
-            HorizontalDivider()
-            Text(stringResource(R.string.section_sync), style = MaterialTheme.typography.titleMedium)
-            Button(onClick = onSync, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.sync_open)) }
-        }
-    }
+                onExportEncrypted = { askExportPassword = true },
+                onExportPlain = { confirmPlain = true },
+                onImport = { importSource.launch(arrayOf("*/*")) },
+                onTrash = onTrash,
+                onAccount = onAccount,
+                onAutofillSettings = {
+                    val intent =
+                        Intent(AndroidSettings.ACTION_REQUEST_SET_AUTOFILL_SERVICE, "package:${context.packageName}".toUri())
+                    runCatching { context.startActivity(intent) }
+                },
+                onAutofillAssociations = onAutofillAssociations,
+                onShareLog = {
+                    val send =
+                        Intent(Intent.ACTION_SEND)
+                            .setType("text/plain")
+                            .putExtra(Intent.EXTRA_SUBJECT, "UltimateOTP error log")
+                            .putExtra(Intent.EXTRA_TEXT, features.logText())
+                    runCatching { context.startActivity(Intent.createChooser(send, null)) }
+                },
+                onSaveLog = { saveLog.launch("ultimateotp-error-log.txt") },
+                onClearLog = features::clearLog,
+            ),
+        autofillEnabled = features.autofillEnabled(),
+    )
     if (askExportPassword) {
         PasswordDialog(
             title = stringResource(R.string.export_password_title),
@@ -265,7 +288,7 @@ fun SettingsScreen(
                 TextButton(onClick = {
                     confirmPlain = false
                     plainTarget.launch("ultimateotp-export.txt")
-                }) { Text(stringResource(R.string.export_anyway)) }
+                }) { Text(stringResource(R.string.export_anyway), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { confirmPlain = false }) { Text(stringResource(R.string.cancel)) } },
         )
@@ -292,8 +315,8 @@ fun PasswordDialog(
     onDismiss: () -> Unit,
     onPassword: (String) -> Unit,
 ) {
-    var first by remember { mutableStateOf("") }
-    var second by remember { mutableStateOf("") }
+    var first by rememberRetainedText("dialog-password")
+    var second by rememberRetainedText("dialog-password-repeat")
     val ok = if (confirm) first.length >= MIN_PASSWORD && first == second else first.isNotEmpty()
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -311,4 +334,65 @@ fun PasswordDialog(
     )
 }
 
+/** A dialog with one radio row per option. */
+@Composable
+fun <T> ChoiceDialog(
+    title: String,
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                options.forEach { (value, label) ->
+                    Row(
+                        Modifier
+                            .fillMaxWidthClickable { onSelect(value) }
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = value == selected, onClick = null)
+                        Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(start = 12.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
 private const val MIN_PASSWORD = 8
+
+/** The label of a duration setting: Immediately, 30 seconds, 1 minute, 5 minutes. */
+@Composable
+fun durationText(seconds: Int): String =
+    when {
+        seconds < 0 -> {
+            stringResource(R.string.lock_choice_never)
+        }
+
+        seconds == 0 -> {
+            stringResource(R.string.duration_immediately)
+        }
+
+        seconds % SECONDS_PER_MINUTE == 0 -> {
+            androidx.compose.ui.res.pluralStringResource(
+                R.plurals.duration_minutes,
+                seconds / SECONDS_PER_MINUTE,
+                seconds / SECONDS_PER_MINUTE,
+            )
+        }
+
+        else -> {
+            androidx.compose.ui.res
+                .pluralStringResource(R.plurals.duration_seconds, seconds, seconds)
+        }
+    }
+
+private const val SECONDS_PER_MINUTE = 60
+
+private fun Modifier.fillMaxWidthClickable(onClick: () -> Unit): Modifier = this.then(Modifier.fillMaxWidth()).clickable(onClick = onClick)

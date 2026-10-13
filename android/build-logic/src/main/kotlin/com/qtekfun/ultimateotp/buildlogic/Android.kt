@@ -39,6 +39,8 @@ internal fun Project.configureAndroid(android: CommonExtension) {
             warningsAsErrors = true
             abortOnError = true
             checkReleaseBuilds = true
+            // A string without its translation must not ship.
+            error += "MissingTranslation"
         }
 
         // Robolectric reads the merged resources and manifest.
