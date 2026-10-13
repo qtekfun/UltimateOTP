@@ -3,8 +3,9 @@
 """Interoperability with docs/crypto-format.md v1 (branch feat/android).
 
 `vectors/crypto-v1.json` is a verbatim copy of `docs/crypto-vectors/vectors.json` at feat/android
-commit c90fd7b. The server's signed statements (`signing.py`), its size checks (`formats.py`) and
-the test client's crypto must all reproduce or accept them.
+commit 6f05a51 (crypto-format v1.1). The server's signed statements (`signing.py`), its size
+checks (`formats.py`), its SRP (`srp.py`) and the test client's crypto must all reproduce or
+accept them.
 """
 
 import json
@@ -120,3 +121,32 @@ def test_item_blob() -> None:
 )
 def test_blob_size_rule(size: int, ok: bool) -> None:
     assert formats.valid_blob_size(size) is ok
+
+
+def test_srp_against_the_android_vector() -> None:
+    """crypto-format §4.4 (v1.1): login subkey, verifier, A, B, u, S, K, M1 and M2."""
+    from ultimateotp import srp  # noqa: PLC0415
+
+    v = VECTORS["srp"]
+    group = srp.GROUP_4096
+    kek = bytes.fromhex(v["kek_pw_hex"])
+    subkey = client.login_key(kek)
+    assert subkey.hex() == v["login_subkey_hex"]
+    identity, salt = v["srp_user_id"].encode(), bytes.fromhex(v["srp_salt_hex"])
+    verifier = srp.verifier(group, salt, identity, subkey)
+    assert b64.encode(group.pad(verifier)) == v["verifier_b64u"]
+    a, b = int(v["a_hex"], 16), int(v["b_hex"], 16)
+    big_a, big_b = srp.client_public(group, a), srp.server_public(group, verifier, b)
+    assert b64.encode(group.pad(big_a)) == v["A_b64u"]
+    assert b64.encode(group.pad(big_b)) == v["B_b64u"]
+    assert group.Hint(group.pad(big_a), group.pad(big_b)) == int(v["u_hex"], 16)
+    premaster = srp.premaster_secret(group, verifier, big_a, b, big_b)
+    assert premaster == int(v["S_hex"], 16)
+    m1, key = srp.client_session(group, salt, identity, subkey, a, big_b)
+    assert key.hex() == v["K_hex"]
+    assert b64.encode(m1) == v["M1_b64u"]
+    m2 = srp.server_verify(group, identity, salt, verifier, big_a, b, m1)
+    assert m2 is not None
+    assert b64.encode(m2) == v["M2_b64u"]
+    rfc = v["rfc5054_appendix_b"]
+    assert int(rfc["N"], 16) == srp.RFC5054_TEST_GROUP.N

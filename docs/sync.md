@@ -1,6 +1,6 @@
 # Live sync: Server-Sent Events
 
-Status: decided for `/otp/v1` (contract `contracts/openapi.yaml`, `GET /otp/v1/events`).
+Status: decided for `/otp/v1` (contract `contracts/openapi.yaml` 1.1.0, `GET /otp/v1/events`; unchanged by 1.1.0).
 Owner decision 1 (docs/decisions.md): changes on one device must reach the other online devices
 without a manual step, within seconds.
 
@@ -36,7 +36,7 @@ stream is the "push", and only while the app is in use or a foreground sync runs
 | Event | Sent to | `data` | Client action |
 |---|---|---|---|
 | `vault` (`id:` = version) | every stream of the account (the committing device too) | `{"version", "key_epoch", "signed_by"}` | if `version` > local, `GET /otp/v1/vault?since=<local>`, verify head, merge |
-| `devices` | every stream of the account | `{"devices_revision"}` | `GET /otp/v1/devices`, warn on unexpected additions |
+| `devices` | every stream of the account | `{"devices_revision"}` | `GET /otp/v1/devices` (or `/otp/v1/sessions`), warn on unexpected additions; also sent when a device signs in with the password (SRP) or signs up |
 | `pairing` | streams of the device that created the session | `{"pairing_id", "status"}` | `GET /otp/v1/pairings/{id}`, show SAS |
 | `revoked` | streams of the revoked device; then the stream closes | `{"device_id"}` | stop syncing, wipe server state |
 | `: keepalive` (comment) | every stream, every 15 s | none | none (keeps proxies and NAT from closing the connection) |

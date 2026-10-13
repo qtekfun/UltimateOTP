@@ -22,7 +22,15 @@ Build: `docker build -f server/Dockerfile -t ultimateotp-server:0.1.0 .` from th
 | Variable | Default | Meaning |
 |---|---|---|
 | `UOTP_TRUSTED_PROXIES` | empty | CIDRs whose `X-Forwarded-For` is believed (Traefik's pinned address, cloudflared). Empty: none |
-| `UOTP_ENROLLMENT_SCOPE` | `lan` | `lan` or `anywhere`: where the enrollment surface answers (decision 4) |
+| `UOTP_ENROLLMENT_SCOPE` | `anywhere` | where password login (email code + SRP) and sign-up answer (decision 6) |
+| `UOTP_PAIRING_SCOPE` | `lan` | where enrollment tokens (bootstrap, CLI) and device pairing answer |
+| `UOTP_SIGNUP` | `disabled` | public sign-up; accounts come from `ultimateotp account-create` (decision 8) |
+| `UOTP_EMAIL_VERIFICATION` | `enabled` | emailed login codes (decision 13); `disabled` only for development |
+| `UOTP_SMTP_HOST` / `_PORT` / `_USER` / `_FROM` | `smtp.resend.com` / 587 / `resend` / required | STARTTLS relay; the password is the Docker secret `uotp_smtp_password` (the Resend API key) |
+| `UOTP_SMTP_CA_FILE` | empty | extra CA bundle for a private relay |
+| `UOTP_EMAIL_CODE_TTL_S` / `_MAX_ATTEMPTS` | 600 / 5 | login codes |
+| `UOTP_SRP_LOCKOUT_THRESHOLD` / `_BASE_S` / `_MAX_S` | 5 / 60 / 86400 | per-account lockout after consecutive wrong passwords, doubling |
+| `UOTP_NTFY_URL` | empty | ntfy topic URL for notifications (decision 7); token in the Docker secret `uotp_ntfy_token` |
 | `UOTP_LAN_NETWORKS` | `127.0.0.0/8,::1/128,192.168.0.0/16,fd00::/8` | the owner's LAN/tailnet; **narrow it to your /24 and never include a Docker range** |
 | `UOTP_DENIED_NETWORKS` | empty | never LAN, whatever the above says (put the proxy subnet here) |
 | `UOTP_METRICS_NETWORKS` | loopback | who may read `/metrics` |
@@ -34,7 +42,14 @@ Build: `docker build -f server/Dockerfile -t ultimateotp-server:0.1.0 .` from th
 | `UOTP_RATELIMIT_ENABLED` and `UOTP_*_RATE_PER_S` / `UOTP_*_BURST` | on | in-app limits per client (`enroll`, `auth_failure`) and per device (`mint`, `write`) |
 | `UOTP_LOG_LEVEL` | `INFO` | JSON logs on stdout |
 
-There are no secrets to configure: the server holds no key of its own.
+Secrets (Docker secrets, never environment variables or logs): `uotp_smtp_password` (the Resend
+API key, required while email verification is on) and `uotp_ntfy_token` (optional). The server
+holds no key that decrypts anything.
+
+**Startup rule (decision 13):** the api, and the CLI commands that may send mail
+(`account-create`, `token-create`, `device-revoke`), refuse to start when email verification is
+on and `UOTP_SMTP_HOST`, `UOTP_SMTP_FROM` or the secret is missing. `migrate`, `backup` and the
+read-only commands never need SMTP.
 
 ## 3. Homelab: Cloudflare Tunnel -> Traefik (dedicated network)
 
@@ -59,41 +74,74 @@ it or spoof that address. It joins a small bridge shared only with Traefik.
    # LAN /24 + tailnet. NEVER 172.16.0.0/12 or any Docker range.
    UOTP_LAN_NETWORKS=192.168.50.0/24,100.64.0.0/10,fd7a:115c:a1e0::/48
    UOTP_PROXY_SUBNET=10.213.49.0/24
+   UOTP_SMTP_FROM=UltimateOTP <otp@example.org>   # a sender of your Resend domain
+   UOTP_NTFY_URL=https://ntfy.example.org/ultimateotp   # optional
    ```
+   and `secrets/resend_api_key` (and `secrets/ntfy_token`, uncommenting its lines in
+   `compose.yml`), folder `700`, files `644` (the container runs as uid 10001).
 4. **Cloudflare**: public hostname `otp.example.org` -> `https://traefik:443`, origin server name
    set, cache bypassed for the whole hostname. Cloudflare gives up on an origin that stays silent
    for about 100 s; the 15 s keepalive comment of the event stream keeps it well below that.
 5. **Start**: `docker compose config --quiet && docker compose up -d`.
 6. **First device**: on the host, `docker compose exec api ultimateotp account-create
-   --server-url https://otp.example.org`, then enroll the phone **on the home Wi-Fi** with the
-   printed token (valid 10 minutes, single use). The printed `uotp://enroll?server=...&token=...`
+   --email you@example.org --server-url https://otp.example.org`. The address gets a 6-digit
+   code; enroll the phone **on the home Wi-Fi** with the printed token (valid 10 minutes, single
+   use) and that code, which verifies the address once. Every later device signs in from
+   anywhere with email code + password (SRP), or pairs by QR on the LAN. The printed `uotp://enroll?server=...&token=...`
    link is a proposal for the app to scan as a QR code; the app may ignore it.
 7. **Verify from outside** (mobile data): `https://otp.example.org/otp/v1/server-info` answers;
    `/healthz`, `/readyz`, `/metrics` give 404 (no router); `POST /otp/v1/enroll` gives 403 at
-   Traefik. Commits and the event stream work.
+   Traefik; `POST /otp/v1/srp/attributes` answers (password login is public). Commits and the
+   event stream work. Send a test login to check that the code email arrives through Resend.
 
 ### Routers (`server/deploy/traefik.override.yaml`)
 
 | Router | Rule | Middlewares | Why |
 |---|---|---|---|
-| `otp-enroll` (300) | `/otp/v1/enroll`, `/otp/v1/recovery/keys`, `/otp/v1/pairings/*/join`, `/otp/v1/pairings/*/result` | `local-ip-whitelist@file`, 1 r/s burst 5, inflight 4, body limit | the only routes reachable without a device key; `recovery/keys` returns what an offline password guess needs |
+| `otp-login` (300) | `POST /otp/v1/srp/{attributes,session,verify}`, `/otp/v1/login/email-code`, `/otp/v1/signup` | 6 r/min burst 8, inflight 4, body limit; **public** | password login from anywhere (decision 6); the api adds per-client and per-address email limits and the per-account SRP lockout |
+| `otp-enroll` (300) | `/otp/v1/enroll`, `/otp/v1/recovery/keys`, `/otp/v1/pairings/*/join`, `/otp/v1/pairings/*/result` | `local-ip-whitelist@file`, 1 r/s burst 5, inflight 4, body limit | enrollment tokens and pairing stay on the LAN; `recovery/keys` returns what an offline password guess needs |
 | `otp-events` (250) | `GET /otp/v1/events` | 6 r/min burst 10, inflight 8, **no buffering** | SSE must stream |
 | `otp-write` (200) | non-GET `/otp/v1/*` | 5 r/s burst 20, inflight 8, body <= 4.5 MB | commits, rotation, revocation |
 | `otp-client` (100) | `/otp/v1/*` | 10 r/s burst 50, inflight 8 | reads |
 
-No Authelia on API routes: native app with signed requests. There is **no admin web page**: the
-admin surface is the CLI inside the container (`docker compose exec api ultimateotp ...`), so it is
-reachable only by whoever controls the host. Rate limits exist twice: per client at Traefik, and in
+No Authelia on API routes: native app with signed requests. There is **no admin web page** (decision 8): the
+admin surface is the CLI inside the container (`docker compose exec api ultimateotp ...`:
+`account-create --email`, `account-email-check ACCOUNT on|off`, `token-create`, `accounts`,
+`devices`, `device-revoke`, `backup`, `purge`), so it is reachable only by whoever controls the host. Rate limits exist twice: per client at Traefik, and in
 the api (per resolved client on enrollment and on authentication failures, per device on writes).
 
-### Allowing enrollment from outside the LAN (decision 4, still open)
+### Logging in from anywhere (decisions 6 and 13) and what stays on the LAN
 
-Two switches, both needed: remove `local-ip-whitelist@file` from the `otp-enroll` router, and set
-`UOTP_ENROLLMENT_SCOPE=anywhere`. Consequence: whoever holds a fresh enrollment token can then
-fetch the password wraps from anywhere (at most 5 times per token) and try passwords offline. The
-token is single-use, short-lived and minted only by the CLI or an enrolled device, so the risk is a
-leaked token, but the Argon2id cost and the password strength become the only barrier. Flip it back
-after travelling.
+Password login is public, like Ente's: emailed 6-digit code (10 min, single use, 5 tries), then an
+SRP-6a proof (RFC 5054 4096-bit group, SHA-256). The server stores only the SRP verifier and salt,
+releases the password-wrapped vault key only after a valid proof, and registers the device's key in
+the same request. Defences, outermost first: Cloudflare/CrowdSec, the `otp-login` Traefik limit,
+the api's per-client limits (`srp`, `email_ip`) and per-destination email limit
+(`email_address`), the per-code attempt limit, and the per-account exponential lockout. Unknown
+addresses get decoy answers and no email, so the routes do not reveal who has an account.
+
+Still LAN-only by default: the bootstrap enrollment token, CLI- or device-minted tokens, the
+token-based wrap fetch (recovery-key path) and pairing. To open them while travelling, remove
+`local-ip-whitelist@file` from `otp-enroll` and set `UOTP_PAIRING_SCOPE=anywhere`; then a leaked
+token alone would let someone fetch the wraps and guess passwords offline, so flip it back.
+
+Recovery with the 24-word key (decision 10) is a client feature on top of that path: a CLI token
+(LAN), `GET /otp/v1/recovery/keys`, unwrap locally with the recovery key, enroll, then set a new
+password (`PUT /otp/v1/account/keys` with new wraps and a new `srp` record). The server sees only
+opaque wraps.
+
+### Email (Resend) and ntfy
+
+- Mail leaves through one background worker: SMTP to `UOTP_SMTP_HOST:UOTP_SMTP_PORT`, STARTTLS
+  required (a relay that does not offer it gets neither the key nor the message), then AUTH with
+  `UOTP_SMTP_USER` and the secret. Sent: login codes, account-verification codes, and notices for
+  recovery-data fetches and vault-key rotations.
+- ntfy (optional): a `POST` to `UOTP_NTFY_URL` with `Title`, `Tags`, `Priority` and, when the
+  secret exists, `Authorization: Bearer`. Sent on: a device login or enrollment (any path), a
+  revocation, a recovery-data fetch, a rotation, and an SRP lockout (repeated wrong passwords).
+- Messages contain event names, device labels, client addresses and times, never a token, key,
+  wrap or password. A failed delivery is logged and never fails the API request.
+- The api needs outbound access to the relay and the ntfy server (its default network).
 
 ## 4. Backups and restore
 
@@ -140,8 +188,13 @@ pairings and old nonces (cron it weekly; nothing breaks if you never do).
   `http.request` with the resolved client address and the path without query string. Bodies,
   headers, tokens and blobs are never logged, and a redaction filter removes tokens, bearer
   values, signatures and long base64 runs as a second line of defence.
-- Worth an ntfy alert (CrowdSec or a log shipper): `enroll.success`, `device.revoked`,
-  `recovery.keys_fetched`, `vault.rotated`, and bursts of `auth.failure` or `vault.head_rejected`.
+- New events with 1.1.0: `srp.session`, `srp.success`, `srp.failure` (with `failures`),
+  `srp.lockout` (with `locked_for_s`), `srp.locked`, `email.code_requested`, `email.code_failure`,
+  `signup.success`, `account.email_check`. For CrowdSec, a scenario on `srp.failure` and
+  `email.code_failure` per `client_ip` (for example 10 in 10 minutes) bans password guessers
+  across accounts; the per-account lockout handles guessing at one account from many addresses.
+- The server sends ntfy itself (above); `auth.failure` and `vault.head_rejected` bursts are still
+  worth a log-based alert.
 
 ## 6. Operating limits
 
