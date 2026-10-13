@@ -244,11 +244,14 @@ def test_sessions_list_and_revocation(server: Server, owner: Bootstrapped) -> No
     mine, theirs = by_id[owner.device.device_id], by_id[other.device_id]
     assert mine["current"] is True
     assert mine["app_version"] == "0.9.0"
-    assert mine["last_ip"] == LAN_CLIENT[0]
+    # Never an address: the opaque daily client id (anon.py).
+    assert mine["last_ip"].startswith("c_")
+    assert LAN_CLIENT[0] not in mine["last_ip"]
     assert theirs["current"] is False
     assert theirs["label"] == "Tablet"
     assert theirs["app_version"] == "1.2.3"
-    assert theirs["last_ip"] == PUBLIC_CLIENT[0]
+    assert theirs["last_ip"].startswith("c_")
+    assert theirs["last_ip"] != mine["last_ip"]
     # Any device revokes another from the list.
     assert owner.device.post(f"/otp/v1/devices/{other.device_id}/revoke").status_code == 200
     with server.client(PUBLIC_CLIENT) as internet:

@@ -61,7 +61,8 @@ def test_migrate_then_account_and_token(env: Path, capsys: pytest.CaptureFixture
     assert cli.main(["account-create", "--email", "owner@example.org"]) == 1
     assert run(capsys, "devices", created["account_id"]) == (0, [])
     _, purged = run(capsys, "purge")
-    assert purged == {"enrollment_tokens": 0, "pairings": 0, "request_nonces": 0}
+    assert purged["enrollment_tokens"] == purged["pairings"] == purged["request_nonces"] == 0
+    assert purged["history_versions"] == purged["blocks"] == purged["tombstones"] == 0
 
 
 def test_unknown_ids_fail_cleanly(env: Path, capsys: pytest.CaptureFixture[str]) -> None:
