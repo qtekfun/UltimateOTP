@@ -16,6 +16,7 @@ import com.qtekfun.ultimateotp.core.vault.db.ItemEntity
 import com.qtekfun.ultimateotp.core.vault.db.VaultDatabase
 import com.qtekfun.ultimateotp.core.vault.secure.AuthenticationRequiredException
 import com.qtekfun.ultimateotp.core.vault.secure.InMemorySecretStore
+import com.qtekfun.ultimateotp.core.vault.secure.KeyInvalidatedException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -74,6 +75,24 @@ class VaultRepositoryTest {
                     .single()
                     .otp.label,
             )
+        }
+
+    @Test
+    fun `a write needs a fresh authentication too, and the preflight says so before anything is stored`(): Unit =
+        runBlocking {
+            secrets.authenticated = false
+            assertTrue(runCatching { vault.ensureWritable() }.exceptionOrNull() is AuthenticationRequiredException)
+            assertTrue(runCatching { vault.create() }.exceptionOrNull() is AuthenticationRequiredException)
+            assertEquals(VaultState.NONE, vault.state.value)
+            assertFalse(secrets.contains(VaultRepository.VAULT_KEY))
+
+            secrets.authenticated = true
+            vault.ensureWritable()
+            vault.create()
+            assertEquals(VaultState.UNLOCKED, vault.state.value)
+
+            secrets.invalidated = true
+            assertTrue(runCatching { vault.ensureWritable() }.exceptionOrNull() is KeyInvalidatedException)
         }
 
     @Test

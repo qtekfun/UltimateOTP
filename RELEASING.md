@@ -23,7 +23,7 @@ Without the `UOTP_*` variables, `./gradlew assembleRelease` builds an unsigned A
 
 ## Making a release
 
-1. Set `versionName` (and bump `versionCode`) in `android/app/build.gradle.kts`, then commit to `master`.
+1. Set `versionName` (and bump `versionCode`) in `android/app/build.gradle.kts`, then commit to `master`. Wait for the CI workflow (`.github/workflows/ci.yml`) to be green on that commit: the release workflow runs `./gradlew check` but not the contract test or the emulator suite (docs/testing.md).
 2. Tag exactly `v<versionName>` and push the tag:
    ```sh
    git tag -a v0.1.0 -m "UltimateOTP 0.1.0" && git push origin v0.1.0

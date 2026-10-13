@@ -117,6 +117,9 @@ class SyncEngine(
         val recoveryWords: List<String>,
     )
 
+    /** Fails now if the store would refuse to save keys (see [SyncStore.ensureWritable]). */
+    suspend fun preflight() = store.ensureWritable()
+
     /** Wraps this offline vault's key for a new account (slow with a password: Argon2id). */
     fun newAccountKeys(password: String?): NewAccountKeys {
         val vk = store.vaultKey()
@@ -153,9 +156,11 @@ class SyncEngine(
         emailCode: String? = null,
     ): List<String> =
         mutex.withLock {
+            store.ensureWritable()
             val api = apiFor(serverUrl)
             val created = newAccountKeys(password)
             val keys = DeviceKeys.generate()
+            store.ensureWritable() // again: the key derivation above took seconds
             val request =
                 EnrollRequest(keys.ed25519PublicB64u, keys.x25519PublicB64u, label, created.bundle, api.appVersion, emailCode)
             val response = api.enroll(token, Signer(keys, UotpApi.PENDING), request)
@@ -178,6 +183,8 @@ class SyncEngine(
     ) = mutex.withLock {
         check(store.account() == null) { "this device already has an account" }
         requireNotNull(created.bundle.srp) { "sign-up needs a password" }
+        // The server answers 201 once; a local failure after that would orphan the account.
+        store.ensureWritable()
         val api = apiFor(serverUrl)
         val keys = DeviceKeys.generate()
         val request =
@@ -245,9 +252,17 @@ class SyncEngine(
         label: String,
         unwrap: (com.qtekfun.ultimateotp.core.sync.api.RecoveryKeys) -> ByteArray,
     ) = mutex.withLock {
+        store.ensureWritable()
         val api = apiFor(serverUrl)
         val wraps = api.recoveryKeys(token)
         val vk = unwrap(wraps)
+        var writable = false
+        try {
+            store.ensureWritable() // again: unwrapping with a password took seconds
+            writable = true
+        } finally {
+            if (!writable) vk.wipe()
+        }
         val keys = DeviceKeys.generate()
         val response = api.enroll(token, Signer(keys, UotpApi.PENDING), EnrollRequest(keys.ed25519PublicB64u, keys.x25519PublicB64u, label))
         store.saveDeviceKeys(keys)
@@ -312,6 +327,8 @@ class SyncEngine(
                     privateA = handshake.privateA,
                 )
             val m1 = session.proof(handshake.serverB)
+            // After the slow key derivation, right before the request that registers this device.
+            store.ensureWritable()
             val keys = DeviceKeys.generate()
             val login =
                 try {
@@ -848,6 +865,7 @@ class SyncEngine(
         val first = sync()
         if (first !is SyncResult.Synced) return first
         mutex.withLock {
+            store.ensureWritable()
             val account = refreshDevices(requireAccount())
             val api = api(account)
             val keysNow = api.accountKeys(signer(account))

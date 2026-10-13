@@ -7,3 +7,7 @@
 plugins {
     id("uotp.jvm.library")
 }
+
+dependencies {
+    testImplementation(libs.kotest.property)
+}
