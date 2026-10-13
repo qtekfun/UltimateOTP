@@ -25,7 +25,7 @@ data class ServerEvent(
 /**
  * The live-sync listener: `GET /otp/v1/events` signed like any request, reconnecting with
  * backoff (5 s, doubling up to 60 s, with jitter). The server closes a stream after an hour; a
- * new one gets a fresh signature. Stops for good on a `revoked` event.
+ * new one gets a fresh signature. Stops for good on a `revoked` or `account_deleted` event.
  */
 class EventStream(
     private val http: OkHttpClient,
@@ -69,7 +69,7 @@ class EventStream(
         }
     }
 
-    /** Parses `event:`/`data:` lines until the stream ends. @return true after `revoked`. */
+    /** Parses `event:`/`data:` lines until the stream ends. @return true after `revoked` or `account_deleted`. */
     @Suppress("NestedBlockDepth") // The SSE line grammar, in one place.
     private suspend fun read(source: okio.BufferedSource): Boolean {
         var type = "message"
@@ -80,7 +80,7 @@ class EventStream(
                 line.isEmpty() -> {
                     if (data.isNotEmpty() || type != "message") {
                         onEvent(ServerEvent(type, data.toString()))
-                        if (type == "revoked") return true
+                        if (type == "revoked" || type == "account_deleted") return true
                     }
                     type = "message"
                     data.clear()

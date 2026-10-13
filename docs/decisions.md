@@ -74,3 +74,22 @@ These were judgement calls made while implementing; each can be reversed.
 - Rotating the vault key clears the history and the trash (security over undo).
 - A phone that loses its Keystore key stays on the lock screen: there is no destructive "start over" action yet.
 - `UOTP_EMAIL_VERIFICATION` and `UOTP_SIGNUP` follow Ente's defaults: codes on, sign-up closed once the owner has an account.
+
+### Implementation record: server hardening and account management (items 19–21)
+
+Contract 1.2.0. Implementation notes are in `docs/deploy.md` §6 to §10.
+
+- **Client IPs are anonymized everywhere.** A salted hash with a daily rotating salt
+    (`HMAC-SHA256(daily_salt, ip)` truncated; IPv6 as its /64; salt from a server secret and the
+    UTC date). Applies to the access log, security events, ntfy and email notices, rate-limit keys
+    and metrics. The raw address stays in memory for the request. Consequence recorded here: the
+    active-sessions `last_ip` now shows the opaque daily id, not an address.
+- **Temporary blocking with a growing back-off**: 15 min, 1 h, 24 h across routes per
+    anonymized client, decaying after a quiet period, a login does not erase it, the LAN is exempt,
+    configurable with `UOTP_BLOCK_*`, CLI `blocks`, a `client.blocked` event for CrowdSec.
+- **Vault history** (30 days by default, capped) enables the app's trash and undo; key rotation
+    clears it.
+- **Emails in `es` or `en`** from `Accept-Language` or a `lang` field, fallback `en`.
+- **Account management routes**: delete the account (fresh email code or SRP proof), change the
+    email (code to the new address), sign out every other device, export everything.
+- **Prometheus metrics, a Grafana dashboard and alert rules** (`docs/monitoring/`).

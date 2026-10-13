@@ -1,0 +1,270 @@
+# SPDX-FileCopyrightText: 2026 UltimateOTP contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Continuous integration: every push and pull request runs the test suite that docs/testing.md
+# describes. The jobs are independent (a failure in one does not hide the others) and none of them
+# publishes anything; releases stay in release.yml.
+#
+#   server        ruff, format check, pytest with coverage floor, OpenAPI validation
+#   android       ./gradlew check (detekt, ktlint, lint, licenses, JVM tests, Robolectric UI tests,
+#                 Kover floors) and the check that R8 kept what is reached by name
+#   contract      the Android sync engine against the real Python server (two processes, HTTP)
+#   device        the minified release build on an emulator against a real server
+#   actionlint    the workflow files
+#   gitleaks      secrets in the history
+name: CI
+
+# A branch with an open PR runs once, as the PR; `push` covers master (and tags are the release
+# workflow's business).
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+
+      - name: Install the locked dependencies
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run --frozen ruff check .
+
+      - name: Format
+        run: uv run --frozen ruff format --check .
+
+      - name: OpenAPI contract is valid
+        run: uv run --frozen openapi-spec-validator ../contracts/openapi.yaml
+
+      # Branch coverage; `fail_under` in pyproject.toml is the floor.
+      - name: Tests with coverage
+        run: |
+          uv run --frozen coverage run -m pytest
+          uv run --frozen coverage report
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      # check = detekt, ktlint, lint, licensee, forbidden dependencies, unit and Robolectric tests,
+      # Kover floors (config/coverage/thresholds.properties) and verifyMinifiedBuild (R8 mapping).
+      - name: Check
+        run: ./gradlew check --console=plain
+
+      - name: Assemble the release APK (R8, resource shrinking)
+        run: ./gradlew assembleRelease --console=plain
+
+      - name: Coverage report
+        if: always()
+        run: ./gradlew koverXmlReport --console=plain
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: android-reports
+          path: |
+            android/**/build/reports/tests
+            android/**/build/reports/kover
+            android/**/build/reports/lint-results-*.html
+          if-no-files-found: ignore
+          retention-days: 7
+
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      # Starts `uv run ultimateotp api` on a free port with a temp data directory (see the test).
+      - name: Sync engine against the real server
+        working-directory: android
+        run: ./gradlew :core:sync:contractTest --console=plain
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: contract-reports
+          path: android/core/sync/build/reports/tests/contractTest
+          if-no-files-found: ignore
+          retention-days: 7
+
+  device:
+    name: device (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64, API 34
+            api: 34
+            arch: x86_64
+            target: default
+            suite: full
+            experimental: false
+          # A 32-bit ABI, where size_t is 4 bytes (armeabi-v7a on real phones). It only runs the
+          # Argon2id test, and may not fail the workflow. There is no `default` x86 image for API 30
+          # on the runners ("Failed to find package"), so this one uses the Google APIs image.
+          - name: x86 (32-bit), API 30
+            api: 30
+            arch: x86
+            target: google_apis
+            suite: kdf
+            experimental: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # The server the app talks to: sign-up open, no email (there is no relay in CI). The emulator
+      # reaches the host's loopback as 10.0.2.2.
+      - name: Start the server
+        working-directory: server
+        env:
+          UOTP_DATA_DIR: ${{ runner.temp }}/uotp-data
+          UOTP_MIGRATIONS_DIR: ${{ github.workspace }}/contracts/db/migrations
+          UOTP_HOST: 127.0.0.1
+          UOTP_PORT: "8047"
+          UOTP_SIGNUP: enabled
+          UOTP_EMAIL_VERIFICATION: disabled
+          UOTP_RATELIMIT_ENABLED: "false"
+          UOTP_LOG_LEVEL: INFO
+        run: |
+          mkdir -p "$UOTP_DATA_DIR"
+          uv run --frozen ultimateotp migrate
+          nohup uv run --frozen ultimateotp api > "$RUNNER_TEMP/server.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8047/otp/v1/server-info && exit 0
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/server.log"
+          exit 1
+
+      - name: Instrumented tests on an emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        env:
+          UOTP_SERVER: http://10.0.2.2:8047
+          UOTP_SUITE: ${{ matrix.suite }}
+        with:
+          api-level: ${{ matrix.api }}
+          arch: ${{ matrix.arch }}
+          target: ${{ matrix.target }}
+          profile: pixel_6
+          # 1 GiB of Argon2id needs 1.5 GiB free to be chosen: give the guest room to show that.
+          ram-size: 4096M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: bash .github/scripts/device-tests.sh
+
+      - name: Server log
+        if: always()
+        run: cat "$RUNNER_TEMP/server.log" || true
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: device-reports-${{ matrix.arch }}
+          path: |
+            android/app/build/reports/androidTests
+            android/app/build/outputs/androidTest-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # rhysd/actionlint 1.7.12, by digest (it runs shellcheck on `run:` blocks when installed).
+      - name: actionlint
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
+            -color
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # gitleaks v8.30.1, by digest. The image, not the gitleaks-action: no licence or token needed.
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git --redact --verbose --no-banner /repo

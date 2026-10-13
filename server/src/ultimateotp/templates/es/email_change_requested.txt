@@ -1,0 +1,5 @@
+Subject: UltimateOTP: se ha pedido cambiar tu correo electrónico
+
+Un dispositivo con la sesión iniciada en tu cuenta de UltimateOTP ha pedido cambiar el correo de la cuenta a $new_email.
+
+No cambia nada hasta que se introduzca el código enviado a esa dirección. Si no has sido tú, cierra en "Sesiones activas" los dispositivos que no reconozcas y cambia tu contraseña.

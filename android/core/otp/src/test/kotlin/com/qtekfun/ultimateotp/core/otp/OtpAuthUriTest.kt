@@ -101,4 +101,23 @@ class OtpAuthUriTest {
         assertFalse(p.toString().contains("Secretive"))
         assertFalse(p.toString().contains("JBSWY3DPEHPK3PXP"))
     }
+
+    @Test
+    fun `colons in the issuer or the account survive the round trip`() {
+        for ((issuer, label) in listOf("a:b" to "c", "" to "x:y", "a:b" to "c:d", "Ex" to "me@x.org", ":" to ":", "a%3Ab" to "c")) {
+            val original = OtpParams(OtpType.TOTP, Base32.decode("JBSWY3DPEHPK3PXP"), issuer = issuer, label = label)
+            val back = OtpAuthUri.parse(OtpAuthUri.format(original))
+            assertEquals(issuer, back.issuer, "issuer of $issuer / $label")
+            assertEquals(label, back.label, "label of $issuer / $label")
+        }
+    }
+
+    @Test
+    fun `an encoded separator is read through the issuer parameter`() {
+        val p = OtpAuthUri.parse("otpauth://totp/Example%3Aalice?secret=JBSWY3DPEHPK3PXP&issuer=Example")
+        assertEquals("Example", p.issuer)
+        assertEquals("alice", p.label)
+        val q = OtpAuthUri.parse("otpauth://totp/Ex%3Aa%3Ab?secret=JBSWY3DPEHPK3PXP&issuer=Ex")
+        assertEquals("a:b", q.label)
+    }
 }

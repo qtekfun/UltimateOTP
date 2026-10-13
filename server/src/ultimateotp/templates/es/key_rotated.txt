@@ -1,0 +1,5 @@
+Subject: UltimateOTP: clave de la caja fuerte renovada
+
+La clave de la caja fuerte se ha renovado a la época $epoch; todos los dispositivos recibieron su nueva clave. El historial de versiones anteriores se ha borrado.
+
+Si no has sido tú, revoca los dispositivos que no reconozcas y cambia tu contraseña.

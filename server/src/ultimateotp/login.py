@@ -20,7 +20,7 @@ import secrets
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
-from ultimateotp import b64, ids, srp
+from ultimateotp import anon, b64, i18n, ids, srp
 from ultimateotp.errors import ApiError
 from ultimateotp.models import (
     SignupRequest,
@@ -40,7 +40,7 @@ DECOY_MEMLIMIT = 1 << 30
 CODE_DIGITS = 6
 
 
-def _hash_code(salt: bytes, code: str) -> str:
+def hash_code(salt: bytes, code: str) -> str:
     return hashlib.sha256(salt + code.encode("ascii")).hexdigest()
 
 
@@ -71,21 +71,19 @@ class Login:
         conn.execute(
             "INSERT INTO email_codes (email, salt, code_hash, created_at, expires_at)"
             " VALUES (?, ?, ?, ?, ?)",
-            (email, salt.hex(), _hash_code(salt, code), now, now + self.settings.email_code_ttl_s),
+            (email, salt.hex(), hash_code(salt, code), now, now + self.settings.email_code_ttl_s),
         )
         return code
 
-    def send_code(self, email: str, code: str) -> None:
-        minutes = self.settings.email_code_ttl_s // 60
-        self.service.alerts.email(
-            email,
-            "Your UltimateOTP login code",
-            f"Your UltimateOTP code is {code}.\n\nIt expires in {minutes} minutes and works once."
-            "\nIf you did not try to sign in, someone knows your email address: you can ignore"
-            " this message, they still need your password.\n",
+    def send_code(
+        self, email: str, code: str, lang: str = i18n.DEFAULT, template: str = "login_code"
+    ) -> None:
+        subject, body = i18n.render(
+            lang, template, code=code, minutes=self.settings.email_code_ttl_s // 60
         )
+        self.service.alerts.email(email, subject, body)
 
-    def request_code(self, email: str, client_ip: str) -> None:
+    def request_code(self, email: str, lang: str | None = None) -> None:
         """Sends a code when the address has an account (or may sign up). Always silent."""
         if not self.settings.email_enabled:
             return
@@ -95,9 +93,14 @@ class Login:
                 code = None
             else:
                 code = self.issue_code(conn, email)
-        self.service.event("email.code_requested", client_ip=client_ip, known=code is not None)
+        known = account is not None
+        self.service.event("email.code_requested", known=known)
+        if account is None and code is None:
+            # Asking for a code for an address nobody has: a probe, counted toward a block.
+            self.service.event("login.unknown_account", stage="email_code")
         if code is not None:
-            self.send_code(email, code)
+            stored = account["lang"] if account is not None else None
+            self.send_code(email, code, self.service.language(lang, stored))
 
     def check_code(self, email: str, code: str | None) -> bool:
         """Consumes the code when right; counts a wrong attempt in its own transaction, so the
@@ -110,15 +113,16 @@ class Login:
             if row["attempts"] >= self.settings.email_code_max_attempts or code is None:
                 return False
             expected = row["code_hash"]
-            if hmac.compare_digest(expected, _hash_code(bytes.fromhex(row["salt"]), code)):
+            if hmac.compare_digest(expected, hash_code(bytes.fromhex(row["salt"]), code)):
                 conn.execute("DELETE FROM email_codes WHERE email = ?", (email,))
                 return True
             conn.execute("UPDATE email_codes SET attempts = attempts + 1 WHERE email = ?", (email,))
         return False
 
-    def require_code(self, email: str, code: str | None, client_ip: str) -> None:
+    def require_code(self, email: str, code: str | None) -> None:
         if not self.check_code(email, code):
-            self.service.event("email.code_failure", level=logging.WARNING, client_ip=client_ip)
+            self.service.event("email.code_failure", level=logging.WARNING)
+            self.service.metrics.inc("uotp_logins_total", result="email_code_failure")
             raise ApiError(401, "invalid_email_code", "missing, wrong, used or expired code")
 
     # ------------------------------------------------------------ SRP
@@ -163,7 +167,7 @@ class Login:
             "email_code_required": self._code_required(account),
         }
 
-    def start(self, body: SrpSessionRequest, client_ip: str) -> dict[str, Any]:
+    def start(self, body: SrpSessionRequest) -> dict[str, Any]:
         big_a = _int(body.srp_a)
         if not srp.valid_public(GROUP, big_a):
             raise ApiError(400, "invalid_request", "srp_a out of range")
@@ -173,15 +177,16 @@ class Login:
         usable = account is not None and account["srp_verifier"] is not None
         if account is not None and (account["srp_locked_until"] or 0) > now:
             retry = int(account["srp_locked_until"] - now)
-            self.service.event(
-                "srp.locked", level=logging.WARNING, account_id=account["id"], client_ip=client_ip
-            )
+            self.service.event("srp.locked", level=logging.WARNING, account_id=account["id"])
+            self.service.metrics.inc("uotp_logins_total", result="locked")
             raise ApiError(429, "account_locked", "too many failed logins", retry_after=retry)
         need_code = self.settings.email_enabled and (
             account is None or not usable or bool(account["email_check"])
         )
         if need_code:
-            self.require_code(body.email, body.email_code, client_ip)
+            self.require_code(body.email, body.email_code)
+        elif not usable:
+            self.service.event("login.unknown_account", stage="srp_session")
         if usable and account is not None:
             verifier = _int(account["srp_verifier"])
         else:
@@ -204,13 +209,14 @@ class Login:
                     now + self.settings.srp_session_ttl_s,
                 ),
             )
-        self.service.event("srp.session", client_ip=client_ip)
+        self.service.event("srp.session")
         return {"session_id": session_id, "srp_b": b64.encode(GROUP.pad(big_b))}
 
-    def _failed(self, account_id: str | None, client_ip: str) -> ApiError:
+    def failed(self, account_id: str | None) -> ApiError:
         """Counts a wrong proof and locks the account past the threshold."""
+        self.service.metrics.inc("uotp_logins_total", result="srp_failure")
         if account_id is None:
-            self.service.event("srp.failure", level=logging.WARNING, client_ip=client_ip)
+            self.service.event("srp.failure", level=logging.WARNING)
             return ApiError(401, "srp_failed", "wrong email, password or session")
         s = self.settings
         now = self.clock.now()
@@ -235,7 +241,6 @@ class Login:
             "srp.failure",
             level=logging.WARNING,
             account_id=account_id,
-            client_ip=client_ip,
             failures=failures,
         )
         if locked_for:
@@ -243,29 +248,34 @@ class Login:
                 "srp.lockout",
                 level=logging.WARNING,
                 account_id=account_id,
-                client_ip=client_ip,
                 failures=failures,
                 locked_for_s=locked_for,
             )
+            self.service.metrics.inc("uotp_lockouts_total")
+            client = anon.current()
             self.service.alerts.notify(
                 "UltimateOTP: repeated failed logins",
                 f"{failures} wrong passwords in a row for account {account_id}, last from "
-                f"{client_ip}. Logins are locked for {locked_for} s.",
+                f"client {client.client_id if client else 'unknown'}. Logins are locked for "
+                f"{locked_for} s.",
                 tags="warning",
                 priority="high",
             )
         return ApiError(401, "srp_failed", "wrong email, password or session")
 
     def verify(self, body: SrpVerifyRequest, req: "SignedRequest") -> dict[str, Any]:
-        client_ip = req.client_ip or "unknown"
+        # The timestamp window first: a phone whose clock is off gets `stale_request` with the
+        # server time and retries, so the handshake must not be consumed nor counted yet.
+        self.service.check_window(req)
         now = self.clock.now()
         with self.db.write() as conn:
             session = conn.execute(
                 "SELECT * FROM srp_sessions WHERE id = ?", (body.session_id,)
             ).fetchone()
             conn.execute("DELETE FROM srp_sessions WHERE id = ?", (body.session_id,))
-        if session is None or session["expires_at"] < now:
-            raise self._failed(None, client_ip)
+        # A re-authentication handshake (account.py) is never good for registering a device.
+        if session is None or session["expires_at"] < now or session["purpose"] != "login":
+            raise self.failed(None)
         account_id = session["account_id"]
         with self.db.read() as conn:
             account = (
@@ -274,7 +284,7 @@ class Login:
                 else None
             )
         if account is None or account["srp_verifier"] is None:
-            raise self._failed(None, client_ip)
+            raise self.failed(None)
         m2 = srp.server_verify(
             GROUP,
             account["srp_user_id"].encode("ascii"),
@@ -285,7 +295,7 @@ class Login:
             b64.decode(body.srp_m1),
         )
         if m2 is None:
-            raise self._failed(account["id"], client_ip)
+            raise self.failed(account["id"])
         with self.db.write() as conn:
             conn.execute(
                 "UPDATE accounts SET srp_failures = 0, srp_locked_until = NULL WHERE id = ?",
@@ -297,11 +307,9 @@ class Login:
             )
         self.service.after_register(account["id"], result, req)
         self.service.event(
-            "srp.success",
-            account_id=account["id"],
-            device_id=result["device"]["device_id"],
-            client_ip=client_ip,
+            "srp.success", account_id=account["id"], device_id=result["device"]["device_id"]
         )
+        self.service.metrics.inc("uotp_logins_total", result="success")
         with self.db.read() as conn:
             keys = self.service.key_attributes(conn, account["id"])
         return {"srp_m2": b64.encode(m2), **result, "keys": keys}
@@ -309,28 +317,30 @@ class Login:
     # ------------------------------------------------------------ sign-up (off by default)
 
     def signup(self, body: SignupRequest, req: "SignedRequest") -> dict[str, Any]:
-        client_ip = req.client_ip or "unknown"
         if self.settings.signup != "enabled":
             raise ApiError(403, "signup_disabled", "accounts are created with the admin CLI")
+        self.service.check_window(req)  # before the emailed code is consumed
         if body.keys.srp is None or body.keys.password_wrap is None:
             raise ApiError(400, "keys_required", "sign-up needs the password wraps and SRP")
         if self.settings.email_enabled:
-            self.require_code(body.email, body.email_code, client_ip)
+            self.require_code(body.email, body.email_code)
         account_id = ids.new_account_id()
+        lang = self.service.language(body.lang)
         now = self.clock.now()
         with self.db.write() as conn:
             if self._account_by_email(conn, body.email) is not None:
                 raise ApiError(409, "email_taken")
             conn.execute(
-                "INSERT INTO accounts (id, created_at, email, email_verified_at)"
-                " VALUES (?, ?, ?, ?)",
-                (account_id, now, body.email, now if self.settings.email_enabled else None),
+                "INSERT INTO accounts (id, created_at, email, email_verified_at, lang)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (account_id, now, body.email, now if self.settings.email_enabled else None, lang),
             )
             self.service.store_bundle(conn, account_id, body.keys)
             # Same transaction: a bad proof of possession leaves no account behind.
             result = self.service.register_device(
                 account_id, body.device, req, via="signup", conn=conn
             )
-        self.service.event("signup.success", account_id=account_id, client_ip=client_ip)
+        self.service.event("signup.success", account_id=account_id)
+        self.service.metrics.inc("uotp_signups_total")
         self.service.after_register(account_id, result, req)
         return result

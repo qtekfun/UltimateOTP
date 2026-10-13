@@ -39,17 +39,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.qtekfun.ultimateotp.R
+import com.qtekfun.ultimateotp.auth.AuthGate
+import com.qtekfun.ultimateotp.auth.GateResult
 import com.qtekfun.ultimateotp.core.sync.login.AccountProblem
 import com.qtekfun.ultimateotp.core.sync.login.EmailSignup
 import com.qtekfun.ultimateotp.sync.AccountRefresh
+import com.qtekfun.ultimateotp.ui.components.CopyWordsButton
+import com.qtekfun.ultimateotp.ui.components.PasswordField
 import com.qtekfun.ultimateotp.util.PasswordStrength
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -95,6 +99,7 @@ class SignupViewModel
     constructor(
         private val signup: EmailSignup,
         private val refresh: AccountRefresh,
+        private val gate: AuthGate,
     ) : ViewModel() {
         private val _step = MutableStateFlow<SignupStep>(SignupStep.Email)
         val step: StateFlow<SignupStep> = _step.asStateFlow()
@@ -147,10 +152,20 @@ class SignupViewModel
 
         private fun create() =
             go {
-                signup.create(server, email, code, requireNotNull(draft), deviceLabel)
-                draft = null
-                refresh.accountChanged()
-                SignupStep.Done
+                val keys = requireNotNull(draft)
+                // The engine checks the Keystore before it sends /signup, so declining the prompt
+                // leaves no account behind: back to the words, with the draft kept.
+                when (gate.run { signup.create(server, email, code, keys, deviceLabel) }) {
+                    is GateResult.Done -> {
+                        draft = null
+                        refresh.accountChanged()
+                        SignupStep.Done
+                    }
+
+                    else -> {
+                        SignupStep.Recovery(keys.recoveryWords)
+                    }
+                }
             }
 
         fun retry() {
@@ -177,9 +192,14 @@ class SignupViewModel
                 _step.value =
                     try {
                         block()
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: IOException) {
                         // ApiException (a problem document) or no answer at all.
                         failed(AccountProblem.of(e) ?: AccountProblem.Network)
+                    } catch (_: Exception) {
+                        // A bug or a full disk: a failed step the person can retry, never a dead app.
+                        failed(AccountProblem.Unexpected)
                     }
             }
         }
@@ -313,12 +333,10 @@ private fun SignupPassword(onPassword: (String) -> Unit) {
     var repeat by remember { mutableStateOf("") }
     val strength = PasswordStrength.of(password)
     Text(stringResource(R.string.signup_password_warning))
-    OutlinedTextField(
-        password,
-        { password = it },
-        label = { Text(stringResource(R.string.password)) },
-        visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+    PasswordField(
+        value = password,
+        onValueChange = { password = it },
+        label = stringResource(R.string.password),
         modifier = Modifier.fillMaxWidth(),
     )
     if (password.isNotEmpty()) {
@@ -327,13 +345,11 @@ private fun SignupPassword(onPassword: (String) -> Unit) {
             color = if (strength.acceptable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
         )
     }
-    OutlinedTextField(
-        repeat,
-        { repeat = it },
-        label = { Text(stringResource(R.string.password_repeat)) },
+    PasswordField(
+        value = repeat,
+        onValueChange = { repeat = it },
+        label = stringResource(R.string.password_repeat),
         isError = repeat.isNotEmpty() && repeat != password,
-        visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
         modifier = Modifier.fillMaxWidth(),
     )
     if (repeat.isNotEmpty() && repeat != password) Text(stringResource(R.string.password_mismatch), color = MaterialTheme.colorScheme.error)
@@ -368,6 +384,7 @@ private fun SignupRecovery(
                 },
                 fontFamily = FontFamily.Monospace,
             )
+            CopyWordsButton(words)
         }
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
