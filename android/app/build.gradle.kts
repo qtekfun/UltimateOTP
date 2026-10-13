@@ -125,10 +125,9 @@ val verifyMinifiedBuild =
     tasks.register("verifyMinifiedBuild") {
         group = "verification"
         description = "Checks R8's mapping for classes that must keep their name or must survive."
-        // The R8 task's own output. `outputs/mapping/...` is only copied there by a later packaging
-        // step, so on a clean checkout (CI) it does not exist when this task runs.
-        val mapping = layout.buildDirectory.file("intermediates/mapping/smoke/minifySmokeWithR8/mapping.txt")
-        dependsOn("minifySmokeWithR8")
+        val mapping = layout.buildDirectory.file("outputs/mapping/smoke/mapping.txt")
+        // R8 writes mapping.prt; the Compose mapping merge turns it into the mapping.txt read here.
+        dependsOn("minifySmokeWithR8", "mergeSmokeComposeMapping")
         inputs.file(mapping)
         doLast {
             val renamedTo = mutableMapOf<String, String>()

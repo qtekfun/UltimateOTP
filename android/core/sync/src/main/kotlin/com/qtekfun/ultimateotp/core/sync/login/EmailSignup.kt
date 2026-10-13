@@ -6,9 +6,9 @@ package com.qtekfun.ultimateotp.core.sync.login
 import com.qtekfun.ultimateotp.core.sync.SyncEngine
 import com.qtekfun.ultimateotp.core.sync.SyncResult
 import com.qtekfun.ultimateotp.core.sync.api.UotpApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.IOException
 
 /**
  * Account creation from the app, like Ente Auth (contract 1.1.0, `POST /otp/v1/signup`, open
@@ -78,9 +78,13 @@ class EmailSignup(
     ): SyncResult? {
         check(draft.recoverySaved) { "confirm the recovery key first" }
         engine.signup(server, normalize(email), code.trim().ifBlank { null }, draft.keys, label)
+        // The account exists now: whatever the first sync meets (no network, a store that wants
+        // the user to authenticate) must not turn into a failed sign-up. Live sync retries.
         return try {
             engine.sync()
-        } catch (_: IOException) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
             null
         }
     }

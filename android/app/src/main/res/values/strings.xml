@@ -159,4 +159,8 @@
     <string name="problem_locked_later">Too many wrong passwords: the account is locked for a while. Try again later.</string>
     <string name="problem_rate_limited">Too many attempts. Try again in %1$s.</string>
     <string name="problem_rate_limited_later">Too many attempts. Try again later.</string>
+    <string name="show_password">Show</string>
+    <string name="hide_password">Hide</string>
+    <string name="copy_words">Copy the 24 words</string>
+    <string name="words_copied">Copied (it clears itself soon). Paste it into your password manager</string>
 </resources>

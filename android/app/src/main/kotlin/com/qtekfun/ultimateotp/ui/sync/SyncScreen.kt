@@ -43,7 +43,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.google.zxing.BarcodeFormat
@@ -52,6 +51,8 @@ import com.qtekfun.ultimateotp.R
 import com.qtekfun.ultimateotp.core.sync.EnrollLink
 import com.qtekfun.ultimateotp.core.sync.SyncResult
 import com.qtekfun.ultimateotp.ui.add.QrScanner
+import com.qtekfun.ultimateotp.ui.components.CopyWordsButton
+import com.qtekfun.ultimateotp.ui.components.PasswordField
 import com.qtekfun.ultimateotp.ui.settings.PasswordDialog
 import java.text.DateFormat
 import java.util.Date
@@ -217,6 +218,7 @@ private fun RecoveryWordsCard(
                 },
                 fontFamily = FontFamily.Monospace,
             )
+            CopyWordsButton(words)
             Button(onClick = onSaved) { Text(stringResource(R.string.recovery_saved)) }
         }
     }
@@ -231,6 +233,7 @@ private fun failureText(reason: SyncStep.Reason): Int =
         SyncStep.Reason.REFUSED -> R.string.fail_refused
         SyncStep.Reason.SERVER -> R.string.fail_server
         SyncStep.Reason.LOGIN_UNAVAILABLE -> R.string.login_unavailable
+        SyncStep.Reason.UNEXPECTED -> R.string.problem_unexpected
     }
 
 private fun doneText(kind: SyncStep.DoneKind): Int =
@@ -476,25 +479,10 @@ private fun ChangePassword(model: SyncViewModel) {
         title = { Text(stringResource(R.string.change_password)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    current,
-                    { current = it },
-                    label = { Text(stringResource(R.string.current_password)) },
-                    visualTransformation = PasswordVisualTransformation(),
-                )
+                PasswordField(current, { current = it }, stringResource(R.string.current_password))
                 OutlinedTextField(words, { words = it }, label = { Text(stringResource(R.string.or_recovery_words)) }, minLines = 2)
-                OutlinedTextField(
-                    next,
-                    { next = it },
-                    label = { Text(stringResource(R.string.new_password)) },
-                    visualTransformation = PasswordVisualTransformation(),
-                )
-                OutlinedTextField(
-                    repeat,
-                    { repeat = it },
-                    label = { Text(stringResource(R.string.password_repeat)) },
-                    visualTransformation = PasswordVisualTransformation(),
-                )
+                PasswordField(next, { next = it }, stringResource(R.string.new_password))
+                PasswordField(repeat, { repeat = it }, stringResource(R.string.password_repeat))
             }
         },
         confirmButton = {

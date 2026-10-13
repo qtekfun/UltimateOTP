@@ -49,6 +49,8 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.qtekfun.ultimateotp.R
+import com.qtekfun.ultimateotp.auth.AuthGate
+import com.qtekfun.ultimateotp.auth.GateResult
 import com.qtekfun.ultimateotp.core.otp.OtpGenerator
 import com.qtekfun.ultimateotp.core.otp.OtpType
 import com.qtekfun.ultimateotp.core.sync.model.VaultItem
@@ -69,6 +71,7 @@ class CodesViewModel
     constructor(
         private val vault: VaultRepository,
         private val clipboard: SecureClipboard,
+        private val gate: AuthGate,
     ) : ViewModel() {
         val items: StateFlow<List<VaultItem>> = vault.items.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_MS), emptyList())
 
@@ -77,7 +80,7 @@ class CodesViewModel
         /** HOTP: advance the counter (stored first), then copy the new code. */
         fun nextHotp(id: UUID) =
             viewModelScope.launch {
-                val item = vault.nextHotpCounter(id) ?: return@launch
+                val item = (gate.attempt { vault.nextHotpCounter(id) } as? GateResult.Done)?.value ?: return@launch
                 clipboard.copy(OtpGenerator.code(item.otp, System.currentTimeMillis()))
             }
 
