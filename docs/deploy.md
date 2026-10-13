@@ -24,7 +24,7 @@ Build: `docker build -f server/Dockerfile -t ultimateotp-server:0.1.0 .` from th
 | `UOTP_TRUSTED_PROXIES` | empty | CIDRs whose `X-Forwarded-For` is believed (Traefik's pinned address, cloudflared). Empty: none |
 | `UOTP_ENROLLMENT_SCOPE` | `anywhere` | where password login (email code + SRP) and sign-up answer (decision 6) |
 | `UOTP_PAIRING_SCOPE` | `lan` | where enrollment tokens (bootstrap, CLI) and device pairing answer |
-| `UOTP_SIGNUP` | `disabled` | public sign-up; accounts come from `ultimateotp account-create` (decision 8) |
+| `UOTP_SIGNUP` | `disabled` | public sign-up from the app (`POST /otp/v1/signup`); open it only to create your account (§3 step 6), otherwise accounts come from `ultimateotp account-create` (decision 8) |
 | `UOTP_EMAIL_VERIFICATION` | `enabled` | emailed login codes (decision 13); `disabled` only for development |
 | `UOTP_SMTP_HOST` / `_PORT` / `_USER` / `_FROM` | `smtp.resend.com` / 587 / `resend` / required | STARTTLS relay; the password is the Docker secret `uotp_smtp_password` (the Resend API key) |
 | `UOTP_SMTP_CA_FILE` | empty | extra CA bundle for a private relay |
@@ -83,12 +83,27 @@ it or spoof that address. It joins a small bridge shared only with Traefik.
    set, cache bypassed for the whole hostname. Cloudflare gives up on an origin that stays silent
    for about 100 s; the 15 s keepalive comment of the event stream keeps it well below that.
 5. **Start**: `docker compose config --quiet && docker compose up -d`.
-6. **First device**: on the host, `docker compose exec api ultimateotp account-create
-   --email you@example.org --server-url https://otp.example.org`. The address gets a 6-digit
-   code; enroll the phone **on the home Wi-Fi** with the printed token (valid 10 minutes, single
-   use) and that code, which verifies the address once. Every later device signs in from
-   anywhere with email code + password (SRP), or pairs by QR on the LAN. The printed `uotp://enroll?server=...&token=...`
-   link is a proposal for the app to scan as a QR code; the app may ignore it.
+6. **First device: sign up from the app** (like Ente Auth). Open sign-up for the few minutes it
+   takes, then close it again:
+   1. set `UOTP_SIGNUP=enabled` in `.env` and `docker compose up -d` (recreates the api);
+   2. in the app, choose **Create account** on the first screen (or Settings → Sync → Create
+      account): server URL, email, the 6-digit code from the email, a password (it encrypts
+      everything and cannot be reset; the app shows a strength hint), then write down the 24-word
+      recovery key and confirm it. The app creates the account with `POST /otp/v1/signup`, and the
+      codes already on the phone become the account's first entries;
+   3. set `UOTP_SIGNUP=disabled` again and `docker compose up -d`.
+
+   Every later device chooses **Log in** (email code + password, SRP) from anywhere, or pairs by
+   QR on the LAN. While sign-up is open, anyone who can reach the server and receive email can
+   create an account on it, which is why it stays closed by default (decision 8).
+
+   *Alternative, sign-up kept closed (CLI token, LAN only):* on the host,
+   `docker compose exec api ultimateotp account-create --email you@example.org --server-url
+   https://otp.example.org`. The address gets a 6-digit code; in the app choose **Advanced:
+   enrollment token or pairing** and enroll the phone **on the home Wi-Fi** with the printed token
+   (valid 10 minutes, single use) and that code, which verifies the address once. The printed
+   `uotp://enroll?server=...&token=...` link is a proposal for the app to scan as a QR code; the
+   app may ignore it.
 7. **Verify from outside** (mobile data): `https://otp.example.org/otp/v1/server-info` answers;
    `/healthz`, `/readyz`, `/metrics` give 404 (no router); `POST /otp/v1/enroll` gives 403 at
    Traefik; `POST /otp/v1/srp/attributes` answers (password login is public). Commits and the
