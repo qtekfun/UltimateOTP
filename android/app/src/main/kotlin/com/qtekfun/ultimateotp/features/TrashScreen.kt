@@ -77,7 +77,7 @@ class TrashViewModel
                         emptyList()
                     } catch (e: IllegalStateException) {
                         // No account on this device.
-                        diagnostics.event("history", "server trash needs an account")
+                        diagnostics.event("history", "server trash needs an account (${e.javaClass.simpleName})")
                         emptyList()
                     }
             }

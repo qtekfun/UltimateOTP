@@ -26,22 +26,31 @@ object StructureParser {
         val hits = mutableListOf<Pair<Int, AutofillId>>()
         var domain: String? = null
         for (i in 0 until structure.windowNodeCount) {
-            val stack = ArrayDeque<AssistStructure.ViewNode>()
-            stack.add(structure.getWindowNodeAt(i).rootViewNode)
-            while (stack.isNotEmpty()) {
-                val node = stack.removeLast()
+            walk(structure.getWindowNodeAt(i).rootViewNode) { node ->
                 if (domain == null) domain = node.webDomain?.takeIf { it.isNotBlank() }
                 val id = node.autofillId
                 if (id != null && node.autofillType == View.AUTOFILL_TYPE_TEXT) {
                     val score = OtpFieldDetector.score(describe(node))
                     if (score >= OtpFieldDetector.THRESHOLD) hits += score to id
                 }
-                for (c in 0 until node.childCount) stack.add(node.getChildAt(c))
             }
         }
         val best = hits.maxOfOrNull { it.first }
         val ids = if (best == null) emptyList() else hits.filter { it.first == best }.map { it.second }
         return ParsedForm(ids, structure.activityComponent?.packageName, domain)
+    }
+
+    private fun walk(
+        root: AssistStructure.ViewNode,
+        visit: (AssistStructure.ViewNode) -> Unit,
+    ) {
+        val stack = ArrayDeque<AssistStructure.ViewNode>()
+        stack.add(root)
+        while (stack.isNotEmpty()) {
+            val node = stack.removeLast()
+            visit(node)
+            for (c in 0 until node.childCount) stack.add(node.getChildAt(c))
+        }
     }
 
     private fun describe(node: AssistStructure.ViewNode): FieldInfo {

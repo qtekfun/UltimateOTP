@@ -66,6 +66,7 @@ class AutofillAuthActivity : FragmentActivity() {
         }
     }
 
+    @Suppress("ReturnCount") // Guard clauses: nothing to unlock, or already unlocked.
     private suspend fun ensureUnlocked(): Boolean {
         when (vault.state.value) {
             VaultState.UNLOCKED -> return true
@@ -112,7 +113,7 @@ class AutofillAuthActivity : FragmentActivity() {
             ).authenticate(info)
         }
 
-    @Suppress("DEPRECATION") // See AutofillResponses.datasetsResponse.
+    @Suppress("DEPRECATION", "ReturnCount") // setValue: see AutofillResponses; the returns are guard clauses.
     private suspend fun buildResult(): android.os.Parcelable? {
         val fields = intent.getParcelableArrayListExtra<AutofillId>(EXTRA_FIELDS).orEmpty()
         if (fields.isEmpty()) return null

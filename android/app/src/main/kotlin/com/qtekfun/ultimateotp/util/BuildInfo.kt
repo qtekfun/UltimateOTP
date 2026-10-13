@@ -15,7 +15,7 @@ object BuildInfo {
      * by version code).
      */
     fun mapId(): String? {
-        val frames = Throwable().stackTrace
+        val frames = Throwable("stack probe").stackTrace
         frames
             .firstNotNullOfOrNull {
                 it.fileName?.takeIf { f ->
