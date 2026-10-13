@@ -31,7 +31,14 @@ def run(capsys: pytest.CaptureFixture[str], *args: str) -> tuple[int, object]:
 def test_migrate_then_account_and_token(env: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert run(capsys, "migrate")[0] == 0
     assert run(capsys, "migrate")[0] == 0  # idempotent
-    code, created = run(capsys, "account-create", "--server-url", "https://otp.example.org")
+    code, created = run(
+        capsys,
+        "account-create",
+        "--email",
+        "Owner@Example.org",
+        "--server-url",
+        "https://otp.example.org",
+    )
     assert code == 0
     assert isinstance(created, dict)
     assert created["enrollment_token"].startswith("uoe_")
@@ -44,6 +51,14 @@ def test_migrate_then_account_and_token(env: Path, capsys: pytest.CaptureFixture
     assert isinstance(accounts, list)
     assert accounts[0]["account_id"] == created["account_id"]
     assert accounts[0]["active_devices"] == 0
+    assert accounts[0]["email"] == "owner@example.org"
+    assert accounts[0]["email_check"] is True
+    _, toggled = run(capsys, "account-email-check", created["account_id"], "off")
+    assert toggled == {"account_id": created["account_id"], "email_check": False}
+    _, accounts = run(capsys, "accounts")
+    assert isinstance(accounts, list)
+    assert accounts[0]["email_check"] is False
+    assert cli.main(["account-create", "--email", "owner@example.org"]) == 1
     assert run(capsys, "devices", created["account_id"]) == (0, [])
     _, purged = run(capsys, "purge")
     assert purged == {"enrollment_tokens": 0, "pairings": 0, "request_nonces": 0}
