@@ -5,6 +5,7 @@
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator, Callable
+from http import HTTPStatus
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -47,7 +48,7 @@ def _pending(request: Request, call: Callable[[], dict[str, Any]]) -> dict[str, 
     try:
         return call()
     except ApiError as error:
-        if error.status == 401:
+        if error.status == HTTPStatus.UNAUTHORIZED:
             raise auth_failed(request, error) from None
         raise
 

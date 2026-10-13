@@ -19,7 +19,7 @@ import re
 import sys
 import time
 from datetime import UTC, datetime
-from typing import Any, override
+from typing import Any, TextIO, override
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -90,8 +90,10 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(entry, ensure_ascii=False)
 
 
-def configure_logging(level: str) -> None:
-    handler = logging.StreamHandler(sys.stdout)
+def configure_logging(level: str, stream: TextIO | None = None) -> None:
+    """JSON lines on `stream` (stdout for the api; the admin CLI passes stderr so its own
+    output on stdout stays machine-readable)."""
+    handler = logging.StreamHandler(stream or sys.stdout)
     handler.setFormatter(JsonFormatter())
     handler.addFilter(RedactingFilter())
     root = logging.getLogger()

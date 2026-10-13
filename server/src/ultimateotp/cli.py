@@ -68,7 +68,7 @@ def _enroll_uri(server_url: str | None, token: str) -> str | None:
     return f"uotp://enroll?server={quote(server_url, safe='')}&token={token}"
 
 
-def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branch per command
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ultimateotp", description=__doc__)
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -90,7 +90,9 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branc
     args = parser.parse_args(argv)
 
     settings = Settings()
-    configure_logging(settings.log_level)
+    configure_logging(
+        settings.log_level, sys.stdout if args.command in ("api", "migrate") else sys.stderr
+    )
     try:
         if args.command == "api":
             return run_api(settings)

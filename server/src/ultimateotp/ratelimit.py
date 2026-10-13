@@ -32,7 +32,7 @@ class RateLimiter(Protocol):
 
 
 class NoRateLimit:
-    def hit(self, bucket: str, key: str) -> float | None:  # noqa: ARG002 - protocol
+    def hit(self, bucket: str, key: str) -> float | None:
         return None
 
 

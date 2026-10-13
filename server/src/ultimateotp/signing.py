@@ -34,7 +34,7 @@ def _lines(*parts: object) -> bytes:
     return "\n".join(str(p) for p in parts).encode("utf-8")
 
 
-def request_message(
+def request_message(  # noqa: PLR0913, PLR0917 - one argument per signed line
     method: str, target: str, device: str, timestamp: str, nonce: str, body: bytes
 ) -> bytes:
     """`target` is the path as sent plus `?query` when there is one."""

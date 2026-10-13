@@ -29,11 +29,11 @@ from ultimateotp.models import (
     KeyBundle,
     PutKeysRequest,
     RotateRequest,
-    Upsert,
 )
 from ultimateotp.settings import Settings
 
 PENDING = "pending"
+MAX_TIMESTAMP_DIGITS = 12
 NONCE_PURGE_EVERY_S = 60
 
 
@@ -171,7 +171,7 @@ class Service:
         """Common header checks; returns (nonce, signature)."""
         if not (req.device and req.timestamp and req.nonce and req.signature):
             raise _unauthorized()
-        if not req.timestamp.isdecimal() or len(req.timestamp) > 12:
+        if not req.timestamp.isdecimal() or len(req.timestamp) > MAX_TIMESTAMP_DIGITS:
             raise _unauthorized()
         now = self.clock.now()
         if abs(now - int(req.timestamp)) > self.settings.signature_max_skew_s:
@@ -783,14 +783,13 @@ class Service:
         conn: sqlite3.Connection,
         auth: DeviceAuth,
         account: Row,
-        upserts: list[Upsert],
-        deletes: list[str],
-        new_version: int,
-        key_epoch: int,
-        signature: str,
+        body: CommitRequest | RotateRequest,
     ) -> dict[str, tuple[int, str]]:
-        """Validates the change set and the signed head, then writes the items.
+        """Validates the change set and the signed head, then writes the items and the head.
         Returns the live items after the change: item_id -> (version, blob sha256)."""
+        upserts, deletes = body.upserts, body.deletes
+        new_version, signature = body.head.version, body.head.signature
+        key_epoch = body.new_key_epoch if isinstance(body, RotateRequest) else account["key_epoch"]
         changed = [u.item_id for u in upserts] + list(deletes)
         if len(set(changed)) != len(changed):
             raise ApiError(400, "duplicate_item")
@@ -875,16 +874,7 @@ class Service:
             if body.key_epoch != account["key_epoch"]:
                 self.event("vault.conflict", account_id=account["id"], reason="key_epoch")
                 raise ApiError(409, "key_epoch_conflict", head=self.head(account))
-            self._apply(
-                conn,
-                auth,
-                account,
-                body.upserts,
-                body.deletes,
-                body.head.version,
-                account["key_epoch"],
-                body.head.signature,
-            )
+            self._apply(conn, auth, account, body)
             account = self._account(conn, auth.account_id)
         self.event(
             "vault.commit",
@@ -925,16 +915,7 @@ class Service:
                 )
                 if not signing.verify(signer, message, key.seal_signature):
                     raise ApiError(400, "invalid_seal_signature")
-            live = self._apply(
-                conn,
-                auth,
-                account,
-                body.upserts,
-                body.deletes,
-                body.head.version,
-                body.new_key_epoch,
-                body.head.signature,
-            )
+            live = self._apply(conn, auth, account, body)
             if any(version != body.head.version for version, _ in live.values()):
                 raise ApiError(400, "incomplete_rotation", "every live item must be re-encrypted")
             conn.execute(
