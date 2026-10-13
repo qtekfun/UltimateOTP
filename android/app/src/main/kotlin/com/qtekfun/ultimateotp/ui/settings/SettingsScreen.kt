@@ -40,6 +40,7 @@ import com.qtekfun.ultimateotp.core.vault.ImportOutcome
 import com.qtekfun.ultimateotp.core.vault.VaultTransfer
 import com.qtekfun.ultimateotp.ui.components.PasswordField
 import com.qtekfun.ultimateotp.ui.components.rememberRetainedText
+import com.qtekfun.ultimateotp.util.AppLanguage
 import com.qtekfun.ultimateotp.util.AppSettings
 import com.qtekfun.ultimateotp.util.Settings
 import com.qtekfun.ultimateotp.util.ThemeMode
@@ -175,6 +176,8 @@ fun SettingsScreen(
 ) {
     val settings by model.settings.collectAsState()
     val status by model.status.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var language by remember { mutableStateOf(AppLanguage.current(context)) }
     var exportPassword by remember { mutableStateOf<String?>(null) }
     var askExportPassword by rememberSaveable { mutableStateOf(false) }
     var confirmPlain by rememberSaveable { mutableStateOf(false) }
@@ -196,6 +199,7 @@ fun SettingsScreen(
         settings = settings,
         statusText = status?.let { statusText(it) },
         version = BuildConfig.VERSION_NAME,
+        language = language,
         actions =
             SettingsActions(
                 onBack = onBack,
@@ -208,6 +212,10 @@ fun SettingsScreen(
                 onAmoled = { model.setAmoled(it) },
                 onDynamicColor = { model.setDynamicColor(it) },
                 onGridLayout = { model.setGridLayout(it) },
+                onLanguage = { tag ->
+                    language = tag
+                    (context as? android.app.Activity)?.let { AppLanguage.set(it, tag) }
+                },
                 onExportEncrypted = { askExportPassword = true },
                 onExportPlain = { confirmPlain = true },
                 onImport = { importSource.launch(arrayOf("*/*")) },

@@ -41,6 +41,13 @@ class MainActivity : FragmentActivity() {
     /** The saved preferences; null until the first read, which the splash screen waits for. */
     private val loadedSettings = MutableStateFlow<Settings?>(null)
 
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(
+            com.qtekfun.ultimateotp.util.AppLanguage
+                .wrap(newBase),
+        )
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
