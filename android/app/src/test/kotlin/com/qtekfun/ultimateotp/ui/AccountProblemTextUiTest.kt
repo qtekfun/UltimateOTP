@@ -46,7 +46,7 @@ class AccountProblemTextUiTest {
         shows(AccountProblem.WrongPassword, string(R.string.fail_secret))
         shows(AccountProblem.LanOnly, string(R.string.fail_lan))
         shows(AccountProblem.Unexpected, string(R.string.problem_unexpected))
-        shows(AccountProblem.Server("boom"), string(R.string.fail_server))
+        shows(AccountProblem.Server("boom"), string(R.string.fail_server_code, "boom"))
         shows(AccountProblem.AccountLocked(75), string(R.string.problem_locked, "01:15"))
         shows(AccountProblem.AccountLocked(null), string(R.string.problem_locked_later))
         shows(AccountProblem.RateLimited(5), string(R.string.problem_rate_limited, "00:05"))

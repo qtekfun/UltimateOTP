@@ -57,7 +57,6 @@ import com.qtekfun.ultimateotp.ui.theme.Space
 import com.qtekfun.ultimateotp.ui.theme.status
 
 private const val MILLIS = 1_000L
-private const val PREVIEW_SECONDS = 5
 private const val DENSE_FROM = 6
 
 /** The code of [item] at [now] and when it changes; HOTP never expires on its own. */
@@ -76,8 +75,8 @@ fun codeView(
     val code = OtpGenerator.code(otp, now)
     if (otp.type == OtpType.HOTP) return CodeView(code, null, 0, false)
     val remaining = OtpGenerator.millisUntilNextStep(now, otp.period)
-    val soon = remaining <= PREVIEW_SECONDS * MILLIS && otp.period > PREVIEW_SECONDS
-    return CodeView(code, if (soon) OtpGenerator.code(otp, now + otp.period * MILLIS) else null, remaining, soon)
+    // The next code is always shown (owner's request); it only exists for codes with a period.
+    return CodeView(code, OtpGenerator.code(otp, now + otp.period * MILLIS), remaining, true)
 }
 
 /**

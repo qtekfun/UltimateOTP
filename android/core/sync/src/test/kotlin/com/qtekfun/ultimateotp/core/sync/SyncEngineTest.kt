@@ -115,6 +115,30 @@ class SyncEngineTest {
         }
 
     @Test
+    fun `a new recovery key replaces the old words and keeps the password`(): Unit =
+        runBlocking {
+            val a = device()
+            a.store.add(otp("alice"))
+            val oldWords = a.engine.bootstrap(server.url, server.issueToken(), "the password", "A")
+            a.engine.sync()
+            assertThrows<com.qtekfun.ultimateotp.core.crypto.CryptoException.AuthenticationFailed> {
+                a.engine.newRecoveryKey("not the password")
+            }
+            val newWords = a.engine.newRecoveryKey("the password")
+            assertEquals(24, newWords.size)
+            assertNotEquals(oldWords, newWords)
+            val b = device()
+            assertThrows<com.qtekfun.ultimateotp.core.crypto.CryptoException.AuthenticationFailed> {
+                b.engine.enrollWithRecoveryKey(server.url, server.issueToken(), oldWords.joinToString(" "), "B")
+            }
+            b.engine.enrollWithRecoveryKey(server.url, server.issueToken(), newWords.joinToString(" "), "B")
+            val c = device()
+            c.engine.enrollWithPassword(server.url, server.issueToken(), "the password", "C")
+            c.engine.sync()
+            assertEquals(listOf("alice"), c.store.items().map { it.otp.label })
+        }
+
+    @Test
     fun `wrong password and recovery key enrollment`(): Unit =
         runBlocking {
             bootstrapped()
