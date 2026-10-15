@@ -312,4 +312,7 @@
     <string name="undo">Deshacer</string>
     <string name="move_up">Subir</string>
     <string name="move_down">Bajar</string>
+    <string name="new_recovery_key">Nueva clave de recuperación</string>
+    <string name="new_recovery_key_hint">Muestra 24 palabras nuevas. Las anteriores dejan de funcionar.</string>
+    <string name="fail_server_code">El servidor ha notificado un error (%1$s).</string>
 </resources>

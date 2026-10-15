@@ -408,6 +408,50 @@ class SyncEngine(
         }
     }
 
+    /**
+     * Makes a new 24-word recovery key (`PUT /otp/v1/account/keys`) and returns its words. The old words
+     * stop working: only the recovery wrap and the recovery KEK inside the password wrap change; the
+     * vault key, the password and the SRP record stay. Proof is the current password, which also
+     * re-wraps the new recovery KEK for the password path.
+     */
+    suspend fun newRecoveryKey(currentPassword: String): List<String> =
+        mutex.withLock {
+            val account = requireAccount()
+            val api = api(account)
+            val keys = api.accountKeys(signer(account))
+            val wrap = keys.passwordWrap
+            val kdf = keys.passwordKdf
+            require(wrap != null && kdf != null) { "this account has no password" }
+            val params = KdfParams.decode(B64u.decode(kdf)).checkReaderLimits()
+            val kekPw = PasswordKdf.derive(currentPassword, params)
+            val vk = store.vaultKey()
+            val recoveryKey = RecoveryKey.generate()
+            val kekRk = VaultKeyWraps.recoveryKek(recoveryKey)
+            try {
+                // Fails with AuthenticationFailed for a wrong password before anything is sent.
+                VaultKeyWraps.openWithKek(kekPw, wrap, params, keys.keyEpoch).vaultKey.wipe()
+                val bundle = VaultKeyWraps.bundle(vk, account.keyEpoch, kekRk, kekPw, params)
+                val updated =
+                    api.putAccountKeys(
+                        signer(account),
+                        PutKeysRequest(
+                            baseRevision = keys.keysRevision,
+                            keyEpoch = keys.keyEpoch,
+                            passwordWrap = bundle.passwordWrap,
+                            passwordKdf = bundle.passwordKdf,
+                            recoveryWrap = bundle.recoveryWrap,
+                        ),
+                    )
+                store.apply(emptyList(), emptyList(), account.copy(keysRevision = updated.keysRevision))
+                RecoveryKey.toWords(recoveryKey)
+            } finally {
+                vk.wipe()
+                kekPw.wipe()
+                kekRk.wipe()
+                recoveryKey.wipe()
+            }
+        }
+
     /** Session metadata for the "Active sessions" screen (decision 9). */
     suspend fun sessions(): List<SessionInfo> {
         val account = requireAccount()

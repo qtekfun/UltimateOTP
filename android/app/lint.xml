@@ -9,4 +9,10 @@
     <issue id="VectorPath">
         <ignore path="**/res/drawable/si_*.xml" />
     </issue>
+    <!--
+      Dependency freshness is Dependabot's job. A lint error for "a newer version exists" makes a green
+      build go red on the day a library publishes a release, with no change in this repository.
+    -->
+    <issue id="NewerVersionAvailable" severity="ignore" />
+    <issue id="GradleDependency" severity="ignore" />
 </lint>

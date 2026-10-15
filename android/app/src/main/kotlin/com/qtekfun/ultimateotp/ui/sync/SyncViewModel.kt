@@ -72,6 +72,8 @@ sealed interface SyncStep {
 
     data class Failed(
         val reason: Reason,
+        /** The server's problem code for [Reason.SERVER]; never a secret. */
+        val code: String? = null,
     ) : SyncStep
 
     data class Done(
@@ -174,13 +176,13 @@ class SyncViewModel
             try {
                 block()
             } catch (e: ApiException) {
-                SyncStep.Failed(
+                val reason =
                     when (e.code) {
                         "enrollment_network_denied" -> SyncStep.Reason.LAN_ONLY
                         "invalid_token", "pairing_expired", "pairing_state" -> SyncStep.Reason.REFUSED
                         else -> SyncStep.Reason.SERVER
-                    },
-                )
+                    }
+                SyncStep.Failed(reason, e.code.takeIf { reason == SyncStep.Reason.SERVER })
             } catch (_: IOException) {
                 SyncStep.Failed(SyncStep.Reason.NETWORK)
             } catch (_: CryptoException) {
@@ -380,6 +382,12 @@ class SyncViewModel
                     is SyncResult.Synced -> SyncStep.Done(SyncStep.DoneKind.UPLOADED)
                     else -> SyncStep.Failed(SyncStep.Reason.REJECTED_STATE)
                 }
+            }
+
+        /** A new 24-word recovery key (the old words stop working); proof is the current password. */
+        fun newRecoveryKey(password: String) =
+            run(SyncStep.Busy.Kind.DERIVING_KEY) {
+                SyncStep.RecoveryWords(engine.newRecoveryKey(password))
             }
 
         /** New master password; proof is the current password or, after recovery, the 24 words. */
