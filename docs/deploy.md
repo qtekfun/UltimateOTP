@@ -102,7 +102,10 @@ it or spoof that address. It joins a small bridge shared only with Traefik.
    2. in the app, choose **Create account** on the first screen (or Settings → Sync → Create
       account): server URL, email, the 6-digit code from the email, a password (it encrypts
       everything and cannot be reset; the app shows a strength hint), then write down the 24-word
-      recovery key and confirm it. The app creates the account with `POST /otp/v1/signup`, and the
+      recovery key and confirm it. Since 1.3.0 the first step stops at once (`409 email_taken`, or
+      `403 signup_disabled`, before any email) when the address already has an account or sign-up is
+      closed; this is the only place where an address's existence is told, and only while sign-up is open.
+      The app creates the account with `POST /otp/v1/signup`, and the
       codes already on the phone become the account's first entries;
    3. set `UOTP_SIGNUP=disabled` again and `docker compose up -d`.
 
@@ -157,6 +160,23 @@ Recovery with the 24-word key (decision 10) is a client feature on top of that p
 (LAN), `GET /otp/v1/recovery/keys`, unwrap locally with the recovery key, enroll, then set a new
 password (`PUT /otp/v1/account/keys` with new wraps and a new `srp` record). The server sees only
 opaque wraps.
+
+### A server on the home network, and Android 17
+
+Since **Android 17** an app that targets API 37 (UltimateOTP does) cannot open a connection to an
+address on the home network (192.168.x.x, 10.x, 172.16/12, `.local`) unless the user has granted the
+`ACCESS_LOCAL_NETWORK` permission ("Nearby devices" group); without it the connection just times out
+("Could not connect to the server"), while the same URL works in Chrome, which holds it. This hits you
+when the server is reached through a LAN address, **including a public name that split DNS resolves
+to the LAN** (`otp-api.example.org` -> `192.168.88.6`).
+
+- The app declares the permission and asks for it only after a connection failed (sync, log in or
+  create account), with a short explanation. Granting it retries at once. Refusing is fine if the
+  server is reached through the Internet.
+- If you would rather not grant it, make the name resolve to the public address at home (for AdGuard
+  Home: `[/otp-api.example.org/]#` in the upstream servers, exceptions to the split-DNS zone), so the
+  traffic goes through the tunnel as on mobile data.
+- Only Android 17 and later ask: older versions have no such permission and are not affected.
 
 ### Email (Resend) and ntfy
 

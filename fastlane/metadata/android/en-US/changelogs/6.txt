@@ -1,0 +1,1 @@
+New: sort by name, manual, newest or oldest. Sign-up now stops right away when the email already has an account.

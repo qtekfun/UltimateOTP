@@ -98,10 +98,11 @@ def recovery_keys(request: Request) -> dict[str, Any]:
 
 @router.post("/login/email-code", status_code=202, dependencies=[LoginGate])
 def request_email_code(request: Request, body: EmailCodeRequest) -> dict[str, Any]:
-    """Always 202: whether the address has an account is never revealed."""
+    """202 for a login code, whether or not the address has an account. With `purpose: signup` the
+    request is refused up front (no email) when sign-up is closed or the address has an account."""
     rate_limit(request, "email_ip", client_key(request))
     rate_limit(request, "email_address", body.email)
-    service_of(request).login.request_code(body.email, body.lang)
+    service_of(request).login.request_code(body.email, body.lang, body.purpose)
     return {"status": "accepted"}
 
 

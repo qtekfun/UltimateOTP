@@ -27,11 +27,14 @@ import com.qtekfun.ultimateotp.auth.AuthGate
 import com.qtekfun.ultimateotp.auth.GateResult
 import com.qtekfun.ultimateotp.core.otp.OtpGenerator
 import com.qtekfun.ultimateotp.core.sync.SyncResult
+import com.qtekfun.ultimateotp.core.sync.model.ItemOrder
+import com.qtekfun.ultimateotp.core.sync.model.SortMode
 import com.qtekfun.ultimateotp.core.sync.model.VaultItem
 import com.qtekfun.ultimateotp.core.vault.VaultRepository
 import com.qtekfun.ultimateotp.features.EntryOrderViewModel
 import com.qtekfun.ultimateotp.sync.SyncController
 import com.qtekfun.ultimateotp.sync.SyncStatus
+import com.qtekfun.ultimateotp.ui.components.LocalNetworkAccessPrompt
 import com.qtekfun.ultimateotp.ui.components.currentWidthClass
 import com.qtekfun.ultimateotp.util.AppSettings
 import com.qtekfun.ultimateotp.util.SecureClipboard
@@ -40,6 +43,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -56,8 +61,13 @@ class CodesViewModel
         private val sync: SyncController,
         private val gate: AuthGate,
     ) : ViewModel() {
-        val items: StateFlow<List<VaultItem>> = vault.items.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_MS), emptyList())
         val settings: StateFlow<Settings> = appSettings.settings.stateIn(viewModelScope, SharingStarted.Eagerly, Settings())
+
+        /** The entries in the order of the "Sort by" setting; the manual order is what the vault keeps. */
+        val items: StateFlow<List<VaultItem>> =
+            combine(vault.items, appSettings.settings.map { it.sortMode }.distinctUntilChanged()) { all, mode ->
+                ItemOrder.sorted(all, mode)
+            }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_MS), emptyList())
         val syncIndicator: StateFlow<SyncIndicator> =
             sync.status.map(::indicator).stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_MS), SyncIndicator.LOCAL)
 
@@ -69,6 +79,9 @@ class CodesViewModel
                 val item = (gate.attempt { vault.nextHotpCounter(id) } as? GateResult.Done)?.value ?: return@launch
                 clipboard.copy(OtpGenerator.code(item.otp, System.currentTimeMillis()))
             }
+
+        /** After the local-network permission was granted: try again at once. */
+        fun retrySync() = sync.syncNow()
 
         fun setGrid(grid: Boolean) = viewModelScope.launch { appSettings.update { it.copy(gridLayout = grid) } }
 
@@ -115,6 +128,7 @@ fun CodesScreen(
     val items by model.items.collectAsState()
     val settings by model.settings.collectAsState()
     val sync by model.syncIndicator.collectAsState()
+    LocalNetworkAccessPrompt(active = sync == SyncIndicator.OFFLINE, onGranted = model::retrySync)
     var query by rememberSaveable { mutableStateOf("") }
     var searching by rememberSaveable { mutableStateOf(false) }
     var tag by rememberSaveable { mutableStateOf<String?>(null) }
@@ -150,6 +164,7 @@ fun CodesScreen(
             searching = searching,
             tag = tag,
             grid = settings.gridLayout,
+            manualOrder = settings.sortMode == SortMode.MANUAL,
             addSheet = addSheet,
             menuId = find(menuId)?.id,
             tagsId = find(tagsId)?.id,

@@ -275,6 +275,13 @@ data class EmailRequest(
     val email: String,
 )
 
+/** `POST /login/email-code`; [purpose] `signup` makes the server refuse early (contract 1.3.0). */
+@Serializable
+data class EmailCodeRequest(
+    val email: String,
+    val purpose: String? = null,
+)
+
 @Serializable
 data class Accepted(
     val status: String = "accepted",

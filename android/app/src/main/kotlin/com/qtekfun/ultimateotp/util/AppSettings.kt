@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.qtekfun.ultimateotp.core.sync.model.SortMode
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -42,6 +43,8 @@ data class Settings(
     val gridLayout: Boolean = false,
     /** Codes are shown as dots until the account is tapped. Off by default: codes are visible when unlocked. */
     val hideCodes: Boolean = false,
+    /** How the codes are ordered on this device. */
+    val sortMode: SortMode = SortMode.ALPHABETICAL,
 )
 
 @Singleton
@@ -60,6 +63,7 @@ class AppSettings
         private val dynamic = booleanPreferencesKey("dynamic_color")
         private val grid = booleanPreferencesKey("grid_layout")
         private val hide = booleanPreferencesKey("hide_codes")
+        private val sort = stringPreferencesKey("sort_mode")
 
         val settings: Flow<Settings> = context.dataStore.data.map { it.toSettings() }
 
@@ -77,6 +81,7 @@ class AppSettings
                 dynamicColor = this[dynamic] ?: false,
                 gridLayout = this[grid] ?: false,
                 hideCodes = this[hide] ?: false,
+                sortMode = SortMode.entries.firstOrNull { it.name == this[sort] } ?: SortMode.ALPHABETICAL,
             )
 
         suspend fun update(transform: (Settings) -> Settings) {
@@ -92,6 +97,7 @@ class AppSettings
                 prefs[dynamic] = next.dynamicColor
                 prefs[grid] = next.gridLayout
                 prefs[hide] = next.hideCodes
+                prefs[sort] = next.sortMode.name
             }
         }
     }

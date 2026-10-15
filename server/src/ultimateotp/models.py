@@ -6,7 +6,7 @@ Shapes only: lengths after decoding (blob, wrap) are checked by the service agai
 settings, and nothing here ever looks inside a blob.
 """
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
@@ -95,6 +95,8 @@ class NewDevice(_Body):
 class EmailCodeRequest(_Body):
     email: Email
     lang: Lang | None = None
+    # `signup`: the app is about to create an account; refuse early (no email) when it cannot.
+    purpose: Literal["login", "signup"] = "login"
 
 
 class SrpAttributesRequest(_Body):

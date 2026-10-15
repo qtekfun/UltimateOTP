@@ -54,6 +54,7 @@ import com.qtekfun.ultimateotp.ui.components.Callout
 import com.qtekfun.ultimateotp.ui.components.CalloutKind
 import com.qtekfun.ultimateotp.ui.components.CopyWordsButton
 import com.qtekfun.ultimateotp.ui.components.FlowScaffold
+import com.qtekfun.ultimateotp.ui.components.LocalNetworkAccessPrompt
 import com.qtekfun.ultimateotp.ui.components.PasswordField
 import com.qtekfun.ultimateotp.ui.components.RecoveryWordsGrid
 import com.qtekfun.ultimateotp.ui.components.StepHeader
@@ -250,6 +251,7 @@ fun SignupScreen(
     val step by model.step.collectAsState()
     val words = rememberWordsCopier()
     LaunchedEffect(label) { model.deviceLabel = label }
+    LocalNetworkAccessPrompt(active = (step as? SignupStep.Failed)?.problem == AccountProblem.Network)
     SignupContent(
         step = step,
         defaultServer = defaultServer,

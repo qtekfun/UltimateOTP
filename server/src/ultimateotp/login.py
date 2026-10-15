@@ -83,8 +83,20 @@ class Login:
         )
         self.service.alerts.email(email, subject, body)
 
-    def request_code(self, email: str, lang: str | None = None) -> None:
-        """Sends a code when the address has an account (or may sign up). Always silent."""
+    def request_code(self, email: str, lang: str | None = None, purpose: str = "login") -> None:
+        """Sends a code when the address has an account (or may sign up). Silent for a login.
+
+        `purpose="signup"` is the app's first sign-up step: the owner opened sign-up on purpose, so
+        it is told right away (before any email) that sign-up is closed or that the address already
+        has an account, instead of after the password and the recovery words."""
+        if purpose == "signup":
+            if self.settings.signup != "enabled":
+                raise ApiError(403, "signup_disabled", "accounts are created with the admin CLI")
+            with self.db.read() as conn:
+                taken = self._account_by_email(conn, email) is not None
+            if taken:
+                self.service.event("signup.refused", reason="email_taken")
+                raise ApiError(409, "email_taken", "that address already has an account")
         if not self.settings.email_enabled:
             return
         with self.db.write() as conn:
