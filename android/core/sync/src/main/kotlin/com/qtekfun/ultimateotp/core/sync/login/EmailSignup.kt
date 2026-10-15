@@ -5,6 +5,7 @@ package com.qtekfun.ultimateotp.core.sync.login
 
 import com.qtekfun.ultimateotp.core.sync.SyncEngine
 import com.qtekfun.ultimateotp.core.sync.SyncResult
+import com.qtekfun.ultimateotp.core.sync.api.ApiException
 import com.qtekfun.ultimateotp.core.sync.api.UotpApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -52,7 +53,14 @@ class EmailSignup(
         server: String,
         email: String,
     ): Long {
-        apiFor(server).requestEmailCode(normalize(email), forSignup = true)
+        val api = apiFor(server)
+        try {
+            api.requestEmailCode(normalize(email), forSignup = true)
+        } catch (e: ApiException) {
+            // A server older than contract 1.3.0 rejects the unknown `purpose` field: ask the old way.
+            if (e.code != "invalid_request") throw e
+            api.requestEmailCode(normalize(email))
+        }
         return nowSeconds() + RESEND_COOLDOWN_S
     }
 
