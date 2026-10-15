@@ -14,6 +14,22 @@ contract (`contracts/openapi.yaml`) have their own version numbers and are menti
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-15
+
+Android `versionCode` 5. Tag `v0.2.1`. No server change (API contract 1.2.0, image `0.2.1` is the same code as `0.2.0`).
+
+### Added
+
+- Settings > Account > **New recovery key**: after the current password, makes 24 new words and replaces
+  the recovery wrap. The old words stop working; the password and the vault do not change.
+- The next code is shown on every TOTP and Steam card from the start of the period (it was shown only in
+  the last 5 seconds).
+
+### Changed
+
+- A server problem the app has no text for now names its problem code instead of a generic message.
+- Lint no longer fails the build when a newer version of a library is published.
+
 ## [0.2.0] - 2026-10-14
 
 Android `versionCode` 4. Tag `v0.2.0`. Server API contract 1.2.0 (server image `0.2.0`). The first version meant
@@ -118,7 +134,8 @@ Android `versionCode` 1. Tag `v0.1.0`. First tagged version; API contract 1.1.0,
   `docs/crypto-vectors/`), checked by both the Android and the server tests.
 - GPL-3.0-or-later license; release workflow that builds and signs the APK from a `v*` tag.
 
-[Unreleased]: https://github.com/qtekfun/UltimateOTP/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/qtekfun/UltimateOTP/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/qtekfun/UltimateOTP/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/qtekfun/UltimateOTP/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/qtekfun/UltimateOTP/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/qtekfun/UltimateOTP/compare/v0.1.0...v0.1.1
