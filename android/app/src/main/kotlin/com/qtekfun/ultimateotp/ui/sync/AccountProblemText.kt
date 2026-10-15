@@ -42,7 +42,7 @@ fun accountProblemText(problem: AccountProblem): String =
         }
 
         is AccountProblem.Server -> {
-            stringResource(R.string.fail_server)
+            stringResource(R.string.fail_server_code, problem.code)
         }
 
         is AccountProblem.AccountLocked -> {
