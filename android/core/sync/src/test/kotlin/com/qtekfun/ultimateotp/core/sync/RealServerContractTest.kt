@@ -25,6 +25,7 @@ import okhttp3.OkHttpClient
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
@@ -367,6 +368,34 @@ class RealServerContractTest {
             }
             val locked = assertThrows<Exception> { runBlocking { logIn(intruder, email) } }
             assertInstanceOf(AccountProblem.AccountLocked::class.java, AccountProblem.of(locked), locked.toString())
+        }
+
+    @Test
+    fun `a new recovery key replaces the old words on the real server and the password still works`(): Unit =
+        runBlocking {
+            val email = newEmail()
+            val a = phone()
+            a.store.add(otp("alice"))
+            val oldWords = signUp(a, email)
+            val newWords = a.engine.newRecoveryKey(PASSWORD)
+            assertEquals(24, newWords.size)
+            assertNotEquals(oldWords, newWords)
+            val token = mintToken(requireNotNull(a.store.account()).accountId)
+            val old = phone()
+            assertThrows<Exception> {
+                runBlocking { old.engine.enrollWithRecoveryKey(url, token, oldWords.joinToString(" "), "Old words") }
+            }
+            val fresh = phone()
+            fresh.engine.enrollWithRecoveryKey(
+                url,
+                mintToken(requireNotNull(a.store.account()).accountId),
+                newWords.joinToString(" "),
+                "New words",
+            )
+            val b = phone()
+            logIn(b, email)
+            b.engine.sync()
+            assertEquals(listOf("alice"), labels(b))
         }
 
     @Test
