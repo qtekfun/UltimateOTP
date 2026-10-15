@@ -194,7 +194,9 @@ private fun StepView(
         }
 
         is SyncStep.Failed -> {
-            Callout(stringResource(failureText(step.reason)), kind = CalloutKind.ERROR)
+            val text =
+                if (step.code != null) stringResource(R.string.fail_server_code, step.code) else stringResource(failureText(step.reason))
+            Callout(text, kind = CalloutKind.ERROR)
         }
 
         is SyncStep.Done -> {
@@ -454,6 +456,8 @@ private fun WithAccount(
     SettingsGroup(stringResource(R.string.section_account)) {
         ChangePassword(model)
         RowDivider()
+        NewRecoveryKey(model)
+        RowDivider()
         SettingsRow(
             Icons.Filled.Upload,
             stringResource(
@@ -485,6 +489,24 @@ private fun WithAccount(
             },
             dismissButton = { TextButton(onClick = { upload = false }) { Text(stringResource(R.string.cancel)) } },
         )
+    }
+}
+
+/** Makes and shows a new recovery key after the current password; the old words stop working. */
+@Composable
+private fun NewRecoveryKey(model: SyncViewModel) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    SettingsRow(
+        Icons.Filled.Key,
+        stringResource(R.string.new_recovery_key),
+        subtitle = stringResource(R.string.new_recovery_key_hint),
+        onClick = { open = true },
+    )
+    if (open) {
+        PasswordDialog(stringResource(R.string.new_recovery_key), confirm = false, onDismiss = { open = false }) {
+            open = false
+            model.newRecoveryKey(it)
+        }
     }
 }
 
