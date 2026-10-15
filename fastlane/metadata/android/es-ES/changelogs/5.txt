@@ -1,0 +1,1 @@
+Novedad: nueva clave de recuperación (Ajustes > Cuenta) y el código siguiente siempre visible. Mensajes de error del servidor más claros.

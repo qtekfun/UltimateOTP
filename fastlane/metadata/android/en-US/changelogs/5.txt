@@ -1,0 +1,1 @@
+New: new recovery key (Settings > Account) and the next code is always shown. Clearer server error messages.
