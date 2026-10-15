@@ -21,6 +21,7 @@ import okhttp3.OkHttpClient
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -123,6 +124,16 @@ class SignupTest {
             assertEquals(AccountProblem.SignupDisabled, problem { a.signup.create(server.url, "new@example.org", "123456", draft, "A") })
             assertNull(a.store.account())
             assertTrue(!server.hasAccount)
+        }
+
+    @Test
+    fun `a server without the purpose field still gets the code request`(): Unit =
+        runBlocking {
+            val server = server()
+            val a = phone(server)
+            server.failNext("/otp/v1/login/email-code", 400, "invalid_request")
+            a.signup.requestCode(server.url, "new@example.org")
+            assertNotNull(server.codeFor("new@example.org"))
         }
 
     @Test
