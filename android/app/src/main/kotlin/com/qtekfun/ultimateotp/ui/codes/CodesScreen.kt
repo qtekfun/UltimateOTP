@@ -34,6 +34,7 @@ import com.qtekfun.ultimateotp.core.vault.VaultRepository
 import com.qtekfun.ultimateotp.features.EntryOrderViewModel
 import com.qtekfun.ultimateotp.sync.SyncController
 import com.qtekfun.ultimateotp.sync.SyncStatus
+import com.qtekfun.ultimateotp.ui.components.LocalNetworkAccessPrompt
 import com.qtekfun.ultimateotp.ui.components.currentWidthClass
 import com.qtekfun.ultimateotp.util.AppSettings
 import com.qtekfun.ultimateotp.util.SecureClipboard
@@ -78,6 +79,9 @@ class CodesViewModel
                 val item = (gate.attempt { vault.nextHotpCounter(id) } as? GateResult.Done)?.value ?: return@launch
                 clipboard.copy(OtpGenerator.code(item.otp, System.currentTimeMillis()))
             }
+
+        /** After the local-network permission was granted: try again at once. */
+        fun retrySync() = sync.syncNow()
 
         fun setGrid(grid: Boolean) = viewModelScope.launch { appSettings.update { it.copy(gridLayout = grid) } }
 
@@ -124,6 +128,7 @@ fun CodesScreen(
     val items by model.items.collectAsState()
     val settings by model.settings.collectAsState()
     val sync by model.syncIndicator.collectAsState()
+    LocalNetworkAccessPrompt(active = sync == SyncIndicator.OFFLINE, onGranted = model::retrySync)
     var query by rememberSaveable { mutableStateOf("") }
     var searching by rememberSaveable { mutableStateOf(false) }
     var tag by rememberSaveable { mutableStateOf<String?>(null) }

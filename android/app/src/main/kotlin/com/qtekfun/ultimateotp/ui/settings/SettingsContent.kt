@@ -64,6 +64,8 @@ import com.qtekfun.ultimateotp.ui.components.SettingsGroup
 import com.qtekfun.ultimateotp.ui.components.SettingsRow
 import com.qtekfun.ultimateotp.ui.components.SettingsSwitchRow
 import com.qtekfun.ultimateotp.ui.components.UotpLogo
+import com.qtekfun.ultimateotp.ui.components.WidthClass
+import com.qtekfun.ultimateotp.ui.components.currentWidthClass
 import com.qtekfun.ultimateotp.ui.theme.ContentMaxWidth
 import com.qtekfun.ultimateotp.ui.theme.Space
 import com.qtekfun.ultimateotp.util.AppLanguage
@@ -136,22 +138,41 @@ fun SettingsContent(
             )
         },
     ) { padding ->
+        // Unfolded (expanded width) the groups fill two columns instead of one 640 dp strip.
+        val expanded = currentWidthClass() == WidthClass.EXPANDED
+        val first: @Composable () -> Unit = {
+            SecurityGroup(settings, actions) { picker = it }
+            SyncGroup(actions)
+            AutofillGroup(autofillEnabled, actions)
+        }
+        val second: @Composable () -> Unit = {
+            AppearanceGroup(settings, language, actions) { picker = it }
+            DataGroup(statusText, actions)
+            DiagnosticsGroup(actions)
+            AboutGroup(version)
+        }
         Box(Modifier.padding(padding), contentAlignment = Alignment.TopCenter) {
-            Column(
+            val scrolling =
                 Modifier
-                    .widthIn(max = ContentMaxWidth)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = Space.Gutter, vertical = Space.Sm),
-                verticalArrangement = Arrangement.spacedBy(Space.Xl),
-            ) {
-                SecurityGroup(settings, actions) { picker = it }
-                SyncGroup(actions)
-                AutofillGroup(autofillEnabled, actions)
-                AppearanceGroup(settings, language, actions) { picker = it }
-                DataGroup(statusText, actions)
-                DiagnosticsGroup(actions)
-                AboutGroup(version)
+                    .padding(horizontal = Space.Gutter, vertical = Space.Sm)
+            if (expanded) {
+                Row(
+                    scrolling.widthIn(max = ContentMaxWidth * 2),
+                    horizontalArrangement = Arrangement.spacedBy(Space.Xl),
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Xl)) { first() }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Xl)) { second() }
+                }
+            } else {
+                Column(
+                    scrolling.widthIn(max = ContentMaxWidth),
+                    verticalArrangement = Arrangement.spacedBy(Space.Xl),
+                ) {
+                    first()
+                    second()
+                }
             }
         }
     }
