@@ -25,7 +25,7 @@ Without the `UOTP_*` variables, `./gradlew assembleRelease` builds an unsigned A
 
 - `versionName` is SemVer: `X.Y.Z`, or `X.Y.Z-rc.N` for a release candidate. Before 1.0.0 it is `0.x`.
 - `versionCode` is a plain integer that **goes up by exactly one with every tag, release candidates
-  included**, and is never reused or lowered (so far 1, 2, 3; 0.2.0 is 4). Both live in
+  included**, and is never reused or lowered (so far 1 to 4; 0.2.1 is 5). Both live in
   `android/app/build.gradle.kts`. F-Droid and Android compare only `versionCode`; the workflow compares
   the tag with `versionName`.
 - Never move or delete a pushed tag. If a release is wrong, fix it and tag the next version: F-Droid
