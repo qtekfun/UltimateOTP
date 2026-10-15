@@ -316,4 +316,8 @@
     <string name="sort_manual">Manual (drag to reorder)</string>
     <string name="sort_newest">Newest first</string>
     <string name="sort_oldest">Oldest first</string>
+    <string name="local_network_title">Allow access to your home network?</string>
+    <string name="local_network_body">Your server seems to be on your home network. Since Android 17, UltimateOTP needs your permission to connect to it; without it the connection times out. It is only used to reach your own server.</string>
+    <string name="local_network_allow">Allow</string>
+    <string name="not_now">Not now</string>
 </resources>

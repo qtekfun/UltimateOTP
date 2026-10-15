@@ -27,6 +27,13 @@ needs no migration).
   is closed (`403 signup_disabled`), before any email is sent, instead of after the password and the
   recovery words. `POST /login/email-code` takes an optional `purpose` (`login` or `signup`).
 
+### Fixed
+
+- On Android 17 the app could not reach a server on the home network (a LAN address, or a name that
+  split DNS resolves to one): the connection timed out and sync showed "Offline". The app now declares
+  `ACCESS_LOCAL_NETWORK` and asks for it after a connection failed (docs/deploy.md).
+- Settings uses two columns on an unfolded phone or a tablet instead of one narrow strip.
+
 ### Changed
 
 - Entries without a provider are ordered by their account name, not first in the list.

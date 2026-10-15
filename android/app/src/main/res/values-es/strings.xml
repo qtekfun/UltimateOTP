@@ -320,4 +320,8 @@
     <string name="sort_manual">Manual (arrastra para ordenar)</string>
     <string name="sort_newest">Más recientes primero</string>
     <string name="sort_oldest">Más antiguos primero</string>
+    <string name="local_network_title">¿Permitir el acceso a tu red doméstica?</string>
+    <string name="local_network_body">Tu servidor parece estar en tu red doméstica. Desde Android 17, UltimateOTP necesita tu permiso para conectarse a él; sin él la conexión caduca. Solo se usa para llegar a tu propio servidor.</string>
+    <string name="local_network_allow">Permitir</string>
+    <string name="not_now">Ahora no</string>
 </resources>

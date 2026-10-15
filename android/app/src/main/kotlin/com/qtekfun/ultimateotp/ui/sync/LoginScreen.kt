@@ -39,6 +39,7 @@ import com.qtekfun.ultimateotp.sync.SyncController
 import com.qtekfun.ultimateotp.ui.components.Callout
 import com.qtekfun.ultimateotp.ui.components.CalloutKind
 import com.qtekfun.ultimateotp.ui.components.FlowScaffold
+import com.qtekfun.ultimateotp.ui.components.LocalNetworkAccessPrompt
 import com.qtekfun.ultimateotp.ui.components.PasswordField
 import com.qtekfun.ultimateotp.ui.components.StepHeader
 import com.qtekfun.ultimateotp.ui.components.rememberRetainedText
@@ -181,6 +182,7 @@ fun LoginScreen(
     model: LoginViewModel = hiltViewModel(),
 ) {
     val step by model.step.collectAsState()
+    LocalNetworkAccessPrompt(active = (step as? LoginStep.Failed)?.problem == AccountProblem.Network)
     LoginContent(
         step = step,
         defaultServer = defaultServer,
