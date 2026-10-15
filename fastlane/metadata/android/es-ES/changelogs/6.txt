@@ -1,0 +1,1 @@
+Novedad: ordenar por nombre, manual, más recientes o más antiguos. El registro se detiene al instante si el correo ya tiene cuenta.

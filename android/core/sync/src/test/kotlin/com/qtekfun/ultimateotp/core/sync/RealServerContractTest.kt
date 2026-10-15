@@ -25,6 +25,7 @@ import okhttp3.OkHttpClient
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Disabled
@@ -374,11 +375,14 @@ class RealServerContractTest {
             val email = newEmail()
             signUp(phone(), email)
             val second = phone()
-            second.signup.requestCode(url, email)
+            // Contract 1.3.0: the first step is refused, before any email is sent.
+            val early = assertThrows<Exception> { runBlocking { second.signup.requestCode(url, email) } }
+            assertEquals(AccountProblem.EmailTaken, AccountProblem.of(early))
+            // And a client that skipped the first step is still refused at creation.
             val draft = second.signup.prepare(PASSWORD)
             draft.confirmRecoverySaved()
             val error = assertThrows<Exception> { runBlocking { second.signup.create(url, email, "123456", draft, "Phone X") } }
-            assertEquals(AccountProblem.EmailTaken, AccountProblem.of(error))
+            assertNotNull(AccountProblem.of(error))
             assertEquals(null, second.store.account())
         }
 
