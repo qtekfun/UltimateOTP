@@ -21,6 +21,7 @@ import okhttp3.OkHttpClient
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -116,7 +117,8 @@ class SignupTest {
         runBlocking {
             val server = server(signup = false)
             val a = phone(server)
-            a.signup.requestCode(server.url, "new@example.org")
+            // Contract 1.3.0: refused at the first step, before any email.
+            assertEquals(AccountProblem.SignupDisabled, problem { a.signup.requestCode(server.url, "new@example.org") })
             assertNull(server.codeFor("new@example.org"), "no code for a new address while sign-up is closed")
             val draft = a.signup.prepare("correct horse battery").also { it.confirmRecoverySaved() }
             assertEquals(AccountProblem.SignupDisabled, problem { a.signup.create(server.url, "new@example.org", "123456", draft, "A") })
@@ -125,14 +127,23 @@ class SignupTest {
         }
 
     @Test
+    fun `a server without the purpose field still gets the code request`(): Unit =
+        runBlocking {
+            val server = server()
+            val a = phone(server)
+            server.failNext("/otp/v1/login/email-code", 400, "invalid_request")
+            a.signup.requestCode(server.url, "new@example.org")
+            assertNotNull(server.codeFor("new@example.org"))
+        }
+
+    @Test
     fun `an address with an account is taken`(): Unit =
         runBlocking {
             val server = server(accountExists = true)
             val a = phone(server)
-            a.signup.requestCode(server.url, server.email)
-            val draft = a.signup.prepare("correct horse battery").also { it.confirmRecoverySaved() }
-            val code = server.codeFor(server.email)!!
-            assertEquals(AccountProblem.EmailTaken, problem { a.signup.create(server.url, server.email, code, draft, "A") })
+            // Contract 1.3.0: the first step stops here, and no code is emailed.
+            assertEquals(AccountProblem.EmailTaken, problem { a.signup.requestCode(server.url, server.email) })
+            assertNull(server.codeFor(server.email))
             assertNull(a.store.account())
         }
 

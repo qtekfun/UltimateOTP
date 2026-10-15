@@ -210,6 +210,11 @@ libraries' consumer rules already keep them (the mapping check shows names only,
   run the real hinge, `WindowManager` posture, multi-window, or a process death while folded.
   Compose is not adaptive in this app (single column on both displays); nothing checks that the
   inner display *looks* right, only that it works.
+* **The local-network permission (Android 17).** The Robolectric and emulator tests run on API 34,
+  where `ACCESS_LOCAL_NETWORK` does not exist, so the prompt never shows there and a connection to a
+  LAN address is never blocked. Found on a Pixel 9 Pro Fold running Android 17: with split DNS the
+  server name resolved to `192.168.x.x` and the app timed out while Chrome worked. Only a device
+  (or an API 37 emulator image) exercises the prompt and the block.
 * **The system camera, QR scanner and CameraX** (`QrScanner`) and `ActivityResult` pickers other
   than the one smoke attempt.
 * **Production transport.** TLS, Cloudflare, Traefik rate limits, and the real email relay are not

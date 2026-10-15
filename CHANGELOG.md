@@ -14,6 +14,32 @@ contract (`contracts/openapi.yaml`) have their own version numbers and are menti
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-15
+
+Android `versionCode` 6. Tag `v0.3.0`. Server API contract **1.3.0** (server image `0.3.0`; the upgrade
+needs no migration).
+
+### Added
+
+- Sort by: name (A to Z, the default), manual (drag to reorder), newest first, oldest first. Pinned
+  entries stay on top. A local preference in Settings > Appearance.
+- Sign-up stops at its first step when the address already has an account (`409 email_taken`) or sign-up
+  is closed (`403 signup_disabled`), before any email is sent, instead of after the password and the
+  recovery words. `POST /login/email-code` takes an optional `purpose` (`login` or `signup`).
+
+### Fixed
+
+- On Android 17 the app could not reach a server on the home network (a LAN address, or a name that
+  split DNS resolves to one): the connection timed out and sync showed "Offline". The app now declares
+  `ACCESS_LOCAL_NETWORK` and asks for it after a connection failed (docs/deploy.md).
+- Settings uses two columns on an unfolded phone or a tablet instead of one narrow strip.
+
+### Changed
+
+- Entries without a provider are ordered by their account name, not first in the list.
+- Dragging to reorder is offered only in the manual sort mode; the other modes ignore the manual order
+  (which stays stored and synced).
+
 ## [0.2.1] - 2026-10-15
 
 Android `versionCode` 5. Tag `v0.2.1`. No server change (API contract 1.2.0, image `0.2.1` is the same code as `0.2.0`).
@@ -134,7 +160,8 @@ Android `versionCode` 1. Tag `v0.1.0`. First tagged version; API contract 1.1.0,
   `docs/crypto-vectors/`), checked by both the Android and the server tests.
 - GPL-3.0-or-later license; release workflow that builds and signs the APK from a `v*` tag.
 
-[Unreleased]: https://github.com/qtekfun/UltimateOTP/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/qtekfun/UltimateOTP/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/qtekfun/UltimateOTP/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/qtekfun/UltimateOTP/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/qtekfun/UltimateOTP/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/qtekfun/UltimateOTP/compare/v0.1.1...v0.1.2

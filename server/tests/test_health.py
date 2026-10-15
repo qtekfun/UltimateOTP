@@ -38,7 +38,7 @@ def test_metrics_only_for_metrics_networks(server: Server, bootstrapped: Bootstr
 def test_server_info_is_public(server: Server) -> None:
     with server.client(("203.0.113.9", 1)) as client:
         info = client.get("/otp/v1/server-info").json()
-    assert info["api_version"] == "1.2.0"
+    assert info["api_version"] == "1.3.0"
     assert info["history_retention_days"] == 30
     assert info["languages"] == ["en", "es"]
     assert isinstance(info["server_time"], int)

@@ -64,6 +64,7 @@ import com.qtekfun.ultimateotp.ui.components.CalloutKind
 import com.qtekfun.ultimateotp.ui.components.CopyWordsButton
 import com.qtekfun.ultimateotp.ui.components.FlowScaffold
 import com.qtekfun.ultimateotp.ui.components.IconBadge
+import com.qtekfun.ultimateotp.ui.components.LocalNetworkAccessPrompt
 import com.qtekfun.ultimateotp.ui.components.PasswordField
 import com.qtekfun.ultimateotp.ui.components.RecoveryWordsGrid
 import com.qtekfun.ultimateotp.ui.components.RowDivider
@@ -116,6 +117,10 @@ fun SyncScreen(
     val step by model.step.collectAsState()
     val words = rememberWordsCopier()
     val label = remember { deviceLabel() }
+    LocalNetworkAccessPrompt(
+        active = (step as? SyncStep.Failed)?.reason == SyncStep.Reason.NETWORK,
+        onGranted = model::syncNow,
+    )
     var enrollLink by remember { mutableStateOf<EnrollLink?>(null) }
     LaunchedEffect(initialLink) { if (initialLink.isNotBlank()) model.handleLink(initialLink, label) { enrollLink = it } }
     FlowScaffold(title = stringResource(R.string.sync_title), onBack = onBack) {

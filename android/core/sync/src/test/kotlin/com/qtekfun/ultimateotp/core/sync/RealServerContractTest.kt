@@ -25,6 +25,8 @@ import okhttp3.OkHttpClient
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Disabled
@@ -369,16 +371,47 @@ class RealServerContractTest {
         }
 
     @Test
+    fun `a new recovery key replaces the old words on the real server and the password still works`(): Unit =
+        runBlocking {
+            val email = newEmail()
+            val a = phone()
+            a.store.add(otp("alice"))
+            val oldWords = signUp(a, email)
+            val newWords = a.engine.newRecoveryKey(PASSWORD)
+            assertEquals(24, newWords.size)
+            assertNotEquals(oldWords, newWords)
+            val token = mintToken(requireNotNull(a.store.account()).accountId)
+            val old = phone()
+            assertThrows<Exception> {
+                runBlocking { old.engine.enrollWithRecoveryKey(url, token, oldWords.joinToString(" "), "Old words") }
+            }
+            val fresh = phone()
+            fresh.engine.enrollWithRecoveryKey(
+                url,
+                mintToken(requireNotNull(a.store.account()).accountId),
+                newWords.joinToString(" "),
+                "New words",
+            )
+            val b = phone()
+            logIn(b, email)
+            b.engine.sync()
+            assertEquals(listOf("alice"), labels(b))
+        }
+
+    @Test
     fun `sign-up for an address that has an account is refused with email_taken`(): Unit =
         runBlocking {
             val email = newEmail()
             signUp(phone(), email)
             val second = phone()
-            second.signup.requestCode(url, email)
+            // Contract 1.3.0: the first step is refused, before any email is sent.
+            val early = assertThrows<Exception> { runBlocking { second.signup.requestCode(url, email) } }
+            assertEquals(AccountProblem.EmailTaken, AccountProblem.of(early))
+            // And a client that skipped the first step is still refused at creation.
             val draft = second.signup.prepare(PASSWORD)
             draft.confirmRecoverySaved()
             val error = assertThrows<Exception> { runBlocking { second.signup.create(url, email, "123456", draft, "Phone X") } }
-            assertEquals(AccountProblem.EmailTaken, AccountProblem.of(error))
+            assertNotNull(AccountProblem.of(error))
             assertEquals(null, second.store.account())
         }
 

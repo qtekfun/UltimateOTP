@@ -218,8 +218,19 @@ class UotpApi(
         request: RotateRequest,
     ): VaultHead = call("POST", "/otp/v1/vault/rotate", encode(RotateRequest.serializer(), request), signer, null, VaultHead.serializer())
 
-    suspend fun requestEmailCode(email: String): Accepted =
-        call("POST", "/otp/v1/login/email-code", encode(EmailRequest.serializer(), EmailRequest(email)), null, null, Accepted.serializer())
+    /** [forSignup]: the server refuses at once (no email) when sign-up is closed or the address has an account. */
+    suspend fun requestEmailCode(
+        email: String,
+        forSignup: Boolean = false,
+    ): Accepted =
+        call(
+            "POST",
+            "/otp/v1/login/email-code",
+            encode(EmailCodeRequest.serializer(), EmailCodeRequest(email, if (forSignup) "signup" else null)),
+            null,
+            null,
+            Accepted.serializer(),
+        )
 
     suspend fun srpAttributes(email: String): SrpAttributes =
         call(

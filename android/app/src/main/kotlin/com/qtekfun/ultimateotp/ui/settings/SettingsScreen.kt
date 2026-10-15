@@ -38,6 +38,7 @@ import androidx.lifecycle.viewModelScope
 import com.qtekfun.ultimateotp.BuildConfig
 import com.qtekfun.ultimateotp.R
 import com.qtekfun.ultimateotp.core.crypto.PasswordKdf
+import com.qtekfun.ultimateotp.core.sync.model.SortMode
 import com.qtekfun.ultimateotp.core.vault.ImportOutcome
 import com.qtekfun.ultimateotp.core.vault.VaultTransfer
 import com.qtekfun.ultimateotp.features.FeatureSettingsViewModel
@@ -106,6 +107,8 @@ class SettingsViewModel
         fun setDynamicColor(on: Boolean) = viewModelScope.launch { appSettings.update { it.copy(dynamicColor = on) } }
 
         fun setGridLayout(on: Boolean) = viewModelScope.launch { appSettings.update { it.copy(gridLayout = on) } }
+
+        fun setSortMode(mode: SortMode) = viewModelScope.launch { appSettings.update { it.copy(sortMode = mode) } }
 
         fun setHideCodes(on: Boolean) = viewModelScope.launch { appSettings.update { it.copy(hideCodes = on) } }
 
@@ -231,6 +234,7 @@ fun SettingsScreen(
                 onAmoled = { model.setAmoled(it) },
                 onDynamicColor = { model.setDynamicColor(it) },
                 onGridLayout = { model.setGridLayout(it) },
+                onSortMode = { model.setSortMode(it) },
                 onLanguage = { tag ->
                     language = tag
                     (context as? android.app.Activity)?.let { AppLanguage.set(it, tag) }
