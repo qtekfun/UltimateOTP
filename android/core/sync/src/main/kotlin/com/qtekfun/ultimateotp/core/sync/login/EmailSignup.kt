@@ -52,7 +52,7 @@ class EmailSignup(
         server: String,
         email: String,
     ): Long {
-        apiFor(server).requestEmailCode(normalize(email))
+        apiFor(server).requestEmailCode(normalize(email), forSignup = true)
         return nowSeconds() + RESEND_COOLDOWN_S
     }
 

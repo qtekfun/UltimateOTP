@@ -158,22 +158,33 @@ class SignupUiTest(
     }
 
     @Test
-    fun `a closed server explains itself and offers login instead of a dead end`() {
+    fun `a closed server explains itself at the first step and offers login`() {
         backend.server.signupEnabled = false
-        toCodeStep()
-        // Closed sign-up emails no code; the flow still reaches creation and is refused there.
-        ui.type(0, "123456")
-        ui.tap(string(R.string.next))
-        ui.waitFor(string(R.string.signup_password_warning))
-        ui.type(0, PASSWORD)
-        ui.type(1, PASSWORD)
-        ui.tap(string(R.string.next))
-        ui.waitFor(string(R.string.recovery_title), 60_000)
-        rule.onNode(isToggleable()).performClick()
-        ui.tap(string(R.string.signup_create))
+        host.start(screen)
+        ui.type(0, backend.server.url)
+        ui.type(1, "new@example.org")
+        ui.tap(string(R.string.send_code))
+        // Contract 1.3.0: refused before any email, not after the password and the recovery words.
         ui.waitFor(string(R.string.problem_signup_disabled))
         ui.tap(string(R.string.login_title))
         assertEquals("login", leftWith)
+    }
+
+    @Test
+    fun `an address that already has an account stops the sign-up at the first step`() {
+        val taken = FakeBackend(signup = true, accountExists = true)
+        try {
+            host.start(screen)
+            ui.type(0, taken.server.url)
+            ui.type(1, taken.server.email)
+            ui.tap(string(R.string.send_code))
+            ui.waitFor(string(R.string.problem_email_taken))
+            assertEquals(null, taken.server.lastEmailCode)
+            ui.tap(string(R.string.login_title))
+            assertEquals("login", leftWith)
+        } finally {
+            taken.close()
+        }
     }
 
     /**

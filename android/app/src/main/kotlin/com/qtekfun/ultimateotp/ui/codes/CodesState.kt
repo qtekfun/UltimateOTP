@@ -19,6 +19,8 @@ data class CodesUi(
     val searching: Boolean = false,
     val tag: String? = null,
     val grid: Boolean = false,
+    /** Dragging to reorder is offered only in the manual order. */
+    val manualOrder: Boolean = false,
     val addSheet: Boolean = false,
     val menuId: UUID? = null,
     val tagsId: UUID? = null,

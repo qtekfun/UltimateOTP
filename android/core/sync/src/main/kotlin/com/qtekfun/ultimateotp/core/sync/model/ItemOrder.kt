@@ -3,6 +3,21 @@
 
 package com.qtekfun.ultimateotp.core.sync.model
 
+/** How the list is ordered on this device (a local preference, like Ente's sort menu). */
+enum class SortMode {
+    /** Pinned first, then by provider (the account name when the provider is empty). The default. */
+    ALPHABETICAL,
+
+    /** The hand-made order of [ItemOrder.COMPARATOR]: dragged entries first, the rest alphabetical. */
+    MANUAL,
+
+    /** Pinned first, then the most recently added. */
+    NEWEST,
+
+    /** Pinned first, then the oldest first. */
+    OLDEST,
+}
+
 /**
  * The display order of the entries and the drag-and-drop operation on it.
  *
@@ -30,7 +45,7 @@ object ItemOrder {
                         a,
                         b,
                         { !it.favorite },
-                        { it.otp.issuer.lowercase() },
+                        { nameKey(it) },
                         { it.otp.label.lowercase() },
                         { it.id },
                     )
@@ -38,7 +53,36 @@ object ItemOrder {
             }
         }
 
+    /** What the entry is called in the list: the provider, or the account when there is none. */
+    fun nameKey(item: VaultItem): String =
+        item.otp.issuer
+            .ifBlank { item.otp.label }
+            .lowercase()
+
+    private val ALPHABETICAL: Comparator<VaultItem> =
+        compareBy<VaultItem>({ !it.favorite }, { nameKey(it) }, { it.otp.label.lowercase() }, { it.id })
+
+    private val NEWEST: Comparator<VaultItem> =
+        compareBy<VaultItem> { !it.favorite }.thenByDescending { it.created }.thenBy { nameKey(it) }.thenBy { it.id }
+
+    private val OLDEST: Comparator<VaultItem> =
+        compareBy<VaultItem>({ !it.favorite }, { it.created }, { nameKey(it) }, { it.id })
+
+    /** The manual order (what is stored and synced); see [sorted] with a [SortMode] for the others. */
     fun sorted(items: Collection<VaultItem>): List<VaultItem> = items.sortedWith(COMPARATOR)
+
+    fun sorted(
+        items: Collection<VaultItem>,
+        mode: SortMode,
+    ): List<VaultItem> =
+        items.sortedWith(
+            when (mode) {
+                SortMode.ALPHABETICAL -> ALPHABETICAL
+                SortMode.MANUAL -> COMPARATOR
+                SortMode.NEWEST -> NEWEST
+                SortMode.OLDEST -> OLDEST
+            },
+        )
 
     /**
      * Moves the entry at [from] to index [to] of [sorted] (the displayed list, after the move it

@@ -102,7 +102,10 @@ it or spoof that address. It joins a small bridge shared only with Traefik.
    2. in the app, choose **Create account** on the first screen (or Settings → Sync → Create
       account): server URL, email, the 6-digit code from the email, a password (it encrypts
       everything and cannot be reset; the app shows a strength hint), then write down the 24-word
-      recovery key and confirm it. The app creates the account with `POST /otp/v1/signup`, and the
+      recovery key and confirm it. Since 1.3.0 the first step stops at once (`409 email_taken`, or
+      `403 signup_disabled`, before any email) when the address already has an account or sign-up is
+      closed; this is the only place where an address's existence is told, and only while sign-up is open.
+      The app creates the account with `POST /otp/v1/signup`, and the
       codes already on the phone become the account's first entries;
    3. set `UOTP_SIGNUP=disabled` again and `docker compose up -d`.
 

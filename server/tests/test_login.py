@@ -364,3 +364,49 @@ def test_ntfy_notifications(
 def test_no_ntfy_without_url(server: Server, owner: Bootstrapped) -> None:
     assert server.service.alerts.ntfy_enabled is False
     assert server.service.alerts.flush()
+
+
+# ---------------------------------------------------------------- sign-up precheck (contract 1.3.0)
+
+
+def test_signup_precheck_refuses_an_existing_address_before_any_email(
+    make_settings: Callable[..., Settings], make_server: Callable[[Settings], Server]
+) -> None:
+    server = make_server(make_settings(signup="enabled", email_verification="disabled"))
+    with server.client(PUBLIC_CLIENT) as internet:
+        dev = Device(internet)
+        payload = {
+            "email": "taken@example.org",
+            "device": {
+                "ed25519_public_key": dev.ed25519,
+                "x25519_public_key": dev.x25519,
+                "label": "x",
+            },
+            "keys": Vault().key_bundle(PASSWORD, secrets.token_bytes(32)),
+        }
+        assert dev.post("/otp/v1/signup", payload).status_code == 201
+        refused = internet.post(
+            "/otp/v1/login/email-code", json={"email": "taken@example.org", "purpose": "signup"}
+        )
+        assert refused.status_code == 409
+        assert refused.json()["code"] == "email_taken"
+        # A login request for the same address is still blind: 202, whether or not it exists.
+        blind = internet.post("/otp/v1/login/email-code", json={"email": "taken@example.org"})
+        assert blind.status_code == 202
+        fresh = internet.post(
+            "/otp/v1/login/email-code", json={"email": "fresh@example.org", "purpose": "signup"}
+        )
+        assert fresh.status_code == 202
+
+
+def test_signup_precheck_says_signup_is_closed(server: Server) -> None:
+    with server.client(PUBLIC_CLIENT) as internet:
+        response = internet.post(
+            "/otp/v1/login/email-code", json={"email": "new@example.org", "purpose": "signup"}
+        )
+        assert response.status_code == 403
+        assert response.json()["code"] == "signup_disabled"
+        assert (
+            internet.post("/otp/v1/login/email-code", json={"email": "new@example.org"}).status_code
+            == 202
+        )

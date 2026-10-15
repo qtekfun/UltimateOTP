@@ -385,7 +385,7 @@ private fun CodesGrid(
     val allTitle = stringResource(R.string.section_all)
     // Manual order is edited on the full list only: with a filter the positions would be ambiguous.
     val reorder = remember(state, on) { ReorderState(state, on.onReorder) }
-    val canReorder = !filtering && items.size > 1
+    val canReorder = ui.manualOrder && !filtering && items.size > 1
     val pinned = if (filtering) emptyList() else filtered.filter { it.favorite }
     val rest = if (filtering) filtered else filtered.filterNot { it.favorite }
     LazyVerticalGrid(

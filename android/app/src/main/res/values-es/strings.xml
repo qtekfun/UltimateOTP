@@ -315,4 +315,9 @@
     <string name="new_recovery_key">Nueva clave de recuperación</string>
     <string name="new_recovery_key_hint">Muestra 24 palabras nuevas. Las anteriores dejan de funcionar.</string>
     <string name="fail_server_code">El servidor ha notificado un error (%1$s).</string>
+    <string name="sort_title">Ordenar por</string>
+    <string name="sort_alphabetical">Nombre (A a Z)</string>
+    <string name="sort_manual">Manual (arrastra para ordenar)</string>
+    <string name="sort_newest">Más recientes primero</string>
+    <string name="sort_oldest">Más antiguos primero</string>
 </resources>

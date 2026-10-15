@@ -20,6 +20,7 @@ import com.qtekfun.ultimateotp.core.sync.api.DeleteAccountRequest
 import com.qtekfun.ultimateotp.core.sync.api.Device
 import com.qtekfun.ultimateotp.core.sync.api.DeviceList
 import com.qtekfun.ultimateotp.core.sync.api.EmailChangePending
+import com.qtekfun.ultimateotp.core.sync.api.EmailCodeRequest
 import com.qtekfun.ultimateotp.core.sync.api.EmailRequest
 import com.qtekfun.ultimateotp.core.sync.api.EnrollRequest
 import com.qtekfun.ultimateotp.core.sync.api.EnrollResponse
@@ -86,6 +87,8 @@ import kotlin.math.abs
  * `signup_disabled`, `keys_required`, proof of possession with `X-UOTP-Device: pending`), in the
  * real server's order. [accountExists] false starts with no account at all (a fresh server);
  * true is an account made by `ultimateotp account-create` for [email], waiting for its bootstrap.
+ *
+ * Contract 1.3.0: `/login/email-code` with `purpose: signup` answers `signup_disabled` or `email_taken` first.
  *
  * Contract 1.2.0: version history (`/vault/history`, `/vault/history/{version}`, `/vault/trash`,
  * `VaultChanges.full`), account management (`/account/reauth/email-code` and `/account/reauth/srp`, `/account/delete`,
@@ -315,7 +318,13 @@ class FakeUotpServer(
             }
 
             path == "/otp/v1/login/email-code" -> {
-                emailCode(body(r, EmailRequest.serializer()).email)
+                val request = body(r, EmailCodeRequest.serializer())
+                if (request.purpose == "signup") {
+                    // Contract 1.3.0: refused before any email.
+                    if (!signupEnabled) fail(FORBIDDEN, "signup_disabled")
+                    if (request.email == accountEmail) fail(CONFLICT, "email_taken")
+                }
+                emailCode(request.email)
                 ok(Accepted.serializer(), Accepted(), ACCEPTED)
             }
 

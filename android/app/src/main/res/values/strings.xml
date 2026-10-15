@@ -311,4 +311,9 @@
     <string name="new_recovery_key">New recovery key</string>
     <string name="new_recovery_key_hint">Shows 24 new words. The old ones stop working.</string>
     <string name="fail_server_code">The server reported an error (%1$s).</string>
+    <string name="sort_title">Sort by</string>
+    <string name="sort_alphabetical">Name (A to Z)</string>
+    <string name="sort_manual">Manual (drag to reorder)</string>
+    <string name="sort_newest">Newest first</string>
+    <string name="sort_oldest">Oldest first</string>
 </resources>

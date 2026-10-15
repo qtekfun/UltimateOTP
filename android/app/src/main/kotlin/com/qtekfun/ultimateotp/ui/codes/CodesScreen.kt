@@ -27,6 +27,8 @@ import com.qtekfun.ultimateotp.auth.AuthGate
 import com.qtekfun.ultimateotp.auth.GateResult
 import com.qtekfun.ultimateotp.core.otp.OtpGenerator
 import com.qtekfun.ultimateotp.core.sync.SyncResult
+import com.qtekfun.ultimateotp.core.sync.model.ItemOrder
+import com.qtekfun.ultimateotp.core.sync.model.SortMode
 import com.qtekfun.ultimateotp.core.sync.model.VaultItem
 import com.qtekfun.ultimateotp.core.vault.VaultRepository
 import com.qtekfun.ultimateotp.features.EntryOrderViewModel
@@ -40,6 +42,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -56,8 +60,13 @@ class CodesViewModel
         private val sync: SyncController,
         private val gate: AuthGate,
     ) : ViewModel() {
-        val items: StateFlow<List<VaultItem>> = vault.items.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_MS), emptyList())
         val settings: StateFlow<Settings> = appSettings.settings.stateIn(viewModelScope, SharingStarted.Eagerly, Settings())
+
+        /** The entries in the order of the "Sort by" setting; the manual order is what the vault keeps. */
+        val items: StateFlow<List<VaultItem>> =
+            combine(vault.items, appSettings.settings.map { it.sortMode }.distinctUntilChanged()) { all, mode ->
+                ItemOrder.sorted(all, mode)
+            }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_MS), emptyList())
         val syncIndicator: StateFlow<SyncIndicator> =
             sync.status.map(::indicator).stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_MS), SyncIndicator.LOCAL)
 
@@ -150,6 +159,7 @@ fun CodesScreen(
             searching = searching,
             tag = tag,
             grid = settings.gridLayout,
+            manualOrder = settings.sortMode == SortMode.MANUAL,
             addSheet = addSheet,
             menuId = find(menuId)?.id,
             tagsId = find(tagsId)?.id,
