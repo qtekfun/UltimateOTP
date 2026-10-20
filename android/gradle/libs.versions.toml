@@ -40,7 +40,7 @@ ktlintGradle = "14.2.0"
 ktlint = "1.8.0"
 licensee = "1.14.1"
 kover = "0.9.11"
-kotest = "6.2.5"
+kotest = "6.2.6"
 uiautomator = "2.4.0"
 androidxTestRunner = "1.7.0"
 
