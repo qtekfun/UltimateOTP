@@ -6,7 +6,7 @@
 # Build from the repository root: docker build -f server/Dockerfile .
 # Runs as non-root with a read-only root filesystem (compose.yaml), like UltimateTunes.
 
-FROM ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 AS uv
 
 FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS build
 COPY --from=uv /uv /usr/local/bin/uv
